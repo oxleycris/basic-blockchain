@@ -16,58 +16,30 @@ namespace BlockChain
             // Initialise the blockchain with the genesis block.
             InitBlockChain();
 
-            // Hash each individual transaction
-            const string transactionA = "My first block chain string";
-            const string transactionB = "My second block chain string";
-            const string transactionC = "My third block chain string";
-            const string transactionD = "My forth block chain string";
-            const string transactionE = "My fifth block chain string";
+            var hashedTransactions = HashTransactions(GenerateTransactionsList());
 
-            var transactionsList = new List<string>
+            // Run through the hashed tranasction collection and process the merkle tree/binary hash tree.
+            while (hashedTransactions.Count > 1)
             {
-                transactionA,
-                transactionB,
-                transactionC,
-                transactionD,
-                transactionE
-            };
+                hashedTransactions = HashTransactionPairs(hashedTransactions);
+            }
 
-            var hashedTransactions = HashTransactions(transactionsList);
+            var rootHash = hashedTransactions.First().HashString;
 
-            // Run through the hashed tranasction collection and process the merkle tree
+            Console.WriteLine("Root hash: " + rootHash);
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadLine();
 
-            var pairedHashedTransactions = HashTransactionPairs(hashedTransactions);
-            // hash the pairs above.
+            var index = GetAllBlocks().Count() + 1;
 
-
-            // Validate the hash output from above
-
-
-
-
-
-
-
-
-            //const string transactionA = "My first block chain string";
-            //const string transactionB = "My second block chain string";
-            //const string transactionC = "My third block chain string";
-            //const string transactionD = "My forth block chain string";
-
-            ////var hTA = 
-            //var transactions = new List<string>();
-            //AddNewBlock(transactions);
-
-            //for (int i = 0; i < blocks.Count; i++)
-            //{
-            //    Console.WriteLine((i + 1) + ": " + blocks[i]);
-            //}
-
-            //Console.ReadLine();
+            HashBlock(rootHash, DateTime.Now.ToString(), GetLastHash(), index);
         }
+
 
         private static IList<Transaction> HashTransactionPairs(IList<Transaction> transactions)
         {
+            pass++;
+
             var lastTransaction = new Transaction();
 
             if (transactions.Count % 2 == 1)
@@ -86,7 +58,7 @@ namespace BlockChain
                 transactionPair.Add(transactions[0].HashString);
                 transactionPair.Add(transactions[1].HashString);
 
-                hashedTransactions.AddRange(HashTransactions(transactionPair));
+                hashedTransactions.Add(new Transaction{ Idx = idx, HashString = HashPair(transactionPair) });
 
                 for (int i = 0; i < 2; i++)
                 {
@@ -96,20 +68,51 @@ namespace BlockChain
                 idx++;
             }
 
-            transactionPair.Clear();
-            transactionPair.Add(lastTransaction.HashString);
-            transactionPair.Add(lastTransaction.HashString);
+            if (!string.IsNullOrEmpty(lastTransaction.HashString))
+            {
+                transactionPair.Clear();
+                transactionPair.Add(lastTransaction.HashString);
+                transactionPair.Add(lastTransaction.HashString);
 
-            hashedTransactions.AddRange(HashTransactions(transactionPair));
+                hashedTransactions.Add(new Transaction { Idx = idx, HashString = HashPair(transactionPair) });
+            }
+
+            Console.WriteLine("Hashing pairs (pass " + pass + ")...");
+            Thread.Sleep(1500);
+
+            Console.WriteLine("[Idx] | [Hash]");
+
+            foreach (var hashedTransaction in hashedTransactions)
+            {
+                Console.WriteLine(hashedTransaction.Idx + " | " + hashedTransaction.HashString);
+            }
+
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadLine();
 
             return hashedTransactions;
         }
 
+        private static string HashPair(List<string> transactionList)
+        {
+            var sha256 = new SHA256Managed();
+
+            var hashString = string.Empty;
+            var transactionBytes = System.Text.Encoding.Default.GetBytes(string.Concat(transactionList[0] + transactionList[1]));
+            // Double hashed.
+            var encodedString = sha256.ComputeHash(sha256.ComputeHash(transactionBytes));
+
+            for (int j = 0; j < encodedString.Length; j++)
+            {
+                hashString += encodedString[j].ToString("X");
+            }
+
+            return hashString;
+        }
+
         private static IList<Transaction> HashTransactions(List<string> transactionList)
         {
-            pass++;
-
-            Console.WriteLine("Hashing transactions (pass " + pass + ")...");
+            Console.WriteLine("Hashing transactions...");
 
             var hashedTransactionList = new List<Transaction>();
             var sha256 = new SHA256Managed();
@@ -150,8 +153,6 @@ namespace BlockChain
             // Creates the genesis block - the first block within the chain.
             const string data = "Genesis block";
             const string previousHash = "0000000000000000000000000000000000000000000000000000000000000000";
-            const int index = 0;
-            var timeStamp = DateTime.Now.ToString();
 
             Console.WriteLine("Initialising blockchain...");
             Thread.Sleep(1500);
@@ -159,13 +160,16 @@ namespace BlockChain
             Console.WriteLine("Generating genesis block...");
             Thread.Sleep(1500);
 
-            HashBlock(data, timeStamp, previousHash, index);
+            Console.WriteLine("Genesis block created...");
+            Thread.Sleep(1500);
+
+            HashBlock(data, DateTime.Now.ToString(), previousHash, 0);
         }
 
         public static void AddNewBlock(string data)
         {
             var index = blocks.Count;
-            var previousHash = GetLastHash(blocks);
+            var previousHash = GetLastHash();
 
             HashBlock(data, DateTime.Now.ToString(), previousHash, index);
         }
@@ -200,13 +204,15 @@ namespace BlockChain
             }
 
             Console.WriteLine("[VALID] | Nonce: " + nonce + " | Hash: " + hash);
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadLine();
 
             blocks.Add(hash);
+
+            Console.WriteLine("Block count: " + GetAllBlocks().Count());
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadLine();
         }
 
-        private static string GetLastHash(IEnumerable<string> blocks)
+        private static string GetLastHash()
         {
             var lastHash = blocks.Last();
 
@@ -220,6 +226,26 @@ namespace BlockChain
             var hashValid = hash.StartsWith("00");
 
             return hashValid;
+        }
+
+        private static List<string> GenerateTransactionsList()
+        {
+            const string transactionA = "My first block chain string";
+            const string transactionB = "My second block chain string";
+            const string transactionC = "My third block chain string";
+            const string transactionD = "My forth block chain string";
+            const string transactionE = "My fifth block chain string";
+
+            var transactionsList = new List<string>
+            {
+                transactionA,
+                transactionB,
+                transactionC,
+                transactionD,
+                transactionE
+            };
+
+            return transactionsList;
         }
     }
 
