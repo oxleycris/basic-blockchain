@@ -13,10 +13,13 @@ namespace BlockChain
 
         public static void Main(string[] args)
         {
+            // TODO: Return Transaction objects so we can bring in more data.
+            var transactions = GenerateTransactionsList();
+
             // Initialise the blockchain with the genesis block.
             InitBlockChain();
 
-            var hashedTransactions = HashTransactions(GenerateTransactionsList());
+            var hashedTransactions = HashTransactions(transactions);
 
             // Run through the hashed tranasction collection and process the merkle tree/binary hash tree.
             while (hashedTransactions.Count > 1)
@@ -34,7 +37,6 @@ namespace BlockChain
 
             HashBlock(rootHash, DateTime.Now.ToString(), GetLastHash(), index);
         }
-
 
         private static IList<Transaction> HashTransactionPairs(IList<Transaction> transactions)
         {
