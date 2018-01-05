@@ -3,258 +3,381 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading;
+using BlockChain.Classes;
 
 namespace BlockChain
 {
     public class Program
     {
-        public static int pass = 0;
-        public static IList<string> blocks = new List<string>();
+        private const string Difficulty = "00";
+        private static readonly IList<Block> BlockChain = new List<Block>();
 
         public static void Main(string[] args)
         {
-            // TODO: Return Transaction objects so we can bring in more data.
-            var transactions = GenerateTransactionsList();
-
-            // Initialise the blockchain with the genesis block.
-            InitBlockChain();
-
-            var hashedTransactions = HashTransactions(transactions);
-
-            // Run through the hashed tranasction collection and process the merkle tree/binary hash tree.
-            while (hashedTransactions.Count > 1)
+            // If the blockchain has nothing in it then initialise it, and add the genesis block to it.
+            if (BlockChain.Count == 0)
             {
-                hashedTransactions = HashTransactionPairs(hashedTransactions);
+                InitiliseBlockChain();
             }
 
-            var rootHash = hashedTransactions.First().HashString;
+            var blockchain = GetBlockchain();
 
-            Console.WriteLine("Root hash: " + rootHash);
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadLine();
+            // For the sake of demo we will add 4 blocks to the blockchain, once the genesis block has been created.
+            for (var i = 0; i < 3; i++)
+            {
+                // Set up some random transactions.
+                var transactions = GenerateTransactionsList();
 
-            var index = GetAllBlocks().Count() + 1;
+                // Hash all the transactional data and return a list of the hashes created. 
+                var hashedTransactions = GenerateTransactionHashes(transactions);
 
-            HashBlock(rootHash, DateTime.Now.ToString(), GetLastHash(), index);
+                // Process the merkle tree, to return the merkle root, using the hashed values from above.
+                var merkleRoot = ProcessMerkleRootTree(hashedTransactions);
+
+                // Stick the transactions list, previous hash value, merkle root, and a load of other data into a block.
+                var block = new Block
+                {
+                    Position = NextAvailableIndexPosition(),
+                    TransactionCount = transactions.Count,
+                    Transactions = transactions,
+                    Header =
+                    {
+                        PreviousHash = GetLastHash(),
+                        Timestamp = DateTime.Now,
+                        Difficulty = Difficulty,
+                        MerkleRoot = merkleRoot,
+                        Version = "0.1"
+                    }
+                };
+
+                // Process this block to generate a valid hash, checking against our difficulty level.
+                var validBlock = ValidateBlock(block);
+
+                // Once valid, add to the blockchain.
+                AddBlock(validBlock);
+            }
+
+            // Profit!
+            blockchain = GetBlockchain();
         }
 
-        private static IList<Transaction> HashTransactionPairs(IList<Transaction> transactions)
+        private static IEnumerable<Block> GetBlockchain()
         {
-            pass++;
+            return BlockChain.OrderBy(x => x.Position).ToList();
+        }
 
-            var lastTransaction = new Transaction();
+        private static string ProcessMerkleRootTree(IEnumerable<Tuple<int, string>> hashKvps)
+        {
+            Console.WriteLine("Processing merkle tree...");
 
-            if (transactions.Count % 2 == 1)
+            var hashKvpsToProcess = hashKvps.OrderBy(x => x.Item1).ToList();
+
+            // This is where the hashes will be stored that are created from the transactions processed from the list above.
+            var workingHashKvpList = new List<Tuple<int, string>>();
+
+            if (hashKvpsToProcess.Count > 1)
             {
-                lastTransaction = transactions.Last();
-                transactions.Remove(lastTransaction);
-            }
+                // How many times we have had to go through the hashing process to roll the merkle tree up towards its root hash.
+                var passCount = 0;
 
-            var transactionPair = new List<string>();
-            var hashedTransactions = new List<Transaction>();
-            var idx = 0;
-
-            while (transactions.Count > 0)
-            {
-                transactionPair.Clear();
-                transactionPair.Add(transactions[0].HashString);
-                transactionPair.Add(transactions[1].HashString);
-
-                hashedTransactions.Add(new Transaction{ Idx = idx, HashString = HashPair(transactionPair) });
-
-                for (int i = 0; i < 2; i++)
+                // If the count is equal to one here then we have found our root value, otherwise continue processing.
+                while (workingHashKvpList.Count != 1)
                 {
-                    transactions.Remove(transactions[0]);
+                    // If at the end of the pass there are 2 or more hashes left then we need to go through the process again.
+                    if (workingHashKvpList.Count > 1)
+                    {
+                        // Repopulate the processing list, so that we can use it in the WHILE loop below.
+                        hashKvpsToProcess = workingHashKvpList.OrderBy(x => x.Item1).ToList();
+
+                        // Clear out the working list so that we can repopulate with our generated hashes in the WHILE loop below.
+                        workingHashKvpList.Clear();
+                    }
+
+                    while (hashKvpsToProcess.Count > 1)
+                    {
+                        passCount++;
+
+                        Thread.Sleep(1200);
+                        Console.WriteLine("Pass: " + passCount);
+                        Tuple<int, string> lastHashKvp = null;
+
+                        // If there are an odd number of items to process then we remove the last and save it for later, allowing us to pair up an even number.
+                        if (hashKvpsToProcess.Count % 2 == 1)
+                        {
+                            lastHashKvp = hashKvpsToProcess.Last();
+                            hashKvpsToProcess.Remove(lastHashKvp);
+                        }
+
+                        var idx = 0;
+
+                        while (hashKvpsToProcess.Count > 0)
+                        {
+                            // Add the newly hashed pair, plus their index, to the working list.
+                            workingHashKvpList.Add(new Tuple<int, string>(idx, GenerateHash(hashKvpsToProcess[0].Item2, hashKvpsToProcess[1].Item2)));
+
+                            // Remove the items we have processed for when we run through the WHILE loop again.
+                            for (var i = 0; i < 2; i++)
+                            {
+                                hashKvpsToProcess.Remove(hashKvpsToProcess[0]);
+                            }
+
+                            idx++;
+                        }
+
+                        // Once out of the WHILE loop we can process the "last" transaction we removed when we had an odd number..remember?
+                        if (!string.IsNullOrEmpty(lastHashKvp?.Item2))
+                        {
+                            // As we only have a single item to hash, we put it in twice.
+                            workingHashKvpList.Add(new Tuple<int, string>(idx, GenerateHash(lastHashKvp.Item2, lastHashKvp.Item2)));
+                        }
+
+                        Console.WriteLine("[Idx] | [Hash]");
+
+                        foreach (var workingHashKvp in workingHashKvpList)
+                        {
+                            Console.WriteLine(workingHashKvp.Item1 + " | " + workingHashKvp.Item2);
+                        }
+
+                        Console.WriteLine("Press any key to continue...");
+                        Console.ReadLine();
+                    }
                 }
 
-                idx++;
+                Console.WriteLine("Merkle root: " + workingHashKvpList.First().Item2);
+                Console.WriteLine("Press any key to continue...");
+                Console.ReadLine();
+
+                return workingHashKvpList.First().Item2;
             }
 
-            if (!string.IsNullOrEmpty(lastTransaction.HashString))
-            {
-                transactionPair.Clear();
-                transactionPair.Add(lastTransaction.HashString);
-                transactionPair.Add(lastTransaction.HashString);
+            // Only one transaction was passed into the method - probably for creation of the genesis block.
+            // Therefore we put the value in twice, like we did above.
+            var root = GenerateHash(hashKvpsToProcess.First().Item2, hashKvpsToProcess.First().Item2);
 
-                hashedTransactions.Add(new Transaction { Idx = idx, HashString = HashPair(transactionPair) });
-            }
-
-            Console.WriteLine("Hashing pairs (pass " + pass + ")...");
-            Thread.Sleep(1500);
-
-            Console.WriteLine("[Idx] | [Hash]");
-
-            foreach (var hashedTransaction in hashedTransactions)
-            {
-                Console.WriteLine(hashedTransaction.Idx + " | " + hashedTransaction.HashString);
-            }
-
+            Console.WriteLine("Merkle root: " + root);
             Console.WriteLine("Press any key to continue...");
             Console.ReadLine();
 
-            return hashedTransactions;
+            return root;
         }
 
-        private static string HashPair(List<string> transactionList)
+        private static IEnumerable<Tuple<int, string>> GenerateTransactionHashes(IList<Transaction> transactions)
         {
             var sha256 = new SHA256Managed();
 
+            Console.WriteLine("Hashing transactions...");
+
+            var transactionHashKvpList = new List<Tuple<int, string>>();
+
+            for (var i = 0; i < transactions.Count; i++)
+            {
+                // Concatenate all the data from thet transaction.
+                var input = ConcatenateTransactionData(transactions[i]);
+                var hash = GenerateHash(input);
+
+                // Add the hash to our list of hashes to return.
+                transactionHashKvpList.Add(new Tuple<int, string>(i, hash));
+            }
+
+            Thread.Sleep(1500);
+            Console.WriteLine("[Idx] | [Hash]");
+
+            foreach (var kvp in transactionHashKvpList.OrderBy(x => x.Item1))
+            {
+                Console.WriteLine(kvp.Item1 + " | " + kvp.Item2);
+            }
+
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadLine();
+
+            return transactionHashKvpList;
+        }
+
+        private static string ConcatenateTransactionData(Transaction transaction)
+        {
+            return string.Format(transaction.SourceAccount.SortCode +
+                                 transaction.SourceAccount.AccountNumber +
+                                 transaction.DestinationAccount.SortCode +
+                                 transaction.DestinationAccount.AccountNumber +
+                                 transaction.TransferedAmount +
+                                 transaction.Timestamp);
+        }
+
+        private static string GenerateHash(string firstString, string secondString)
+        {
+            var input = string.Concat(firstString, secondString);
+
+            return GenerateHash(input);
+        }
+
+        private static string GenerateHash(string input)
+        {
+            var sha256 = new SHA256Managed();
             var hashString = string.Empty;
-            var transactionBytes = System.Text.Encoding.Default.GetBytes(string.Concat(transactionList[0] + transactionList[1]));
-            // Double hashed.
+            var transactionBytes = System.Text.Encoding.Default.GetBytes(input);
             var encodedString = sha256.ComputeHash(sha256.ComputeHash(transactionBytes));
 
-            for (int j = 0; j < encodedString.Length; j++)
+            foreach (var b in encodedString)
             {
-                hashString += encodedString[j].ToString("X");
+                hashString += b.ToString("X");
             }
 
             return hashString;
         }
 
-        private static IList<Transaction> HashTransactions(List<string> transactionList)
+        public static void InitiliseBlockChain()
         {
-            Console.WriteLine("Hashing transactions...");
-
-            var hashedTransactionList = new List<Transaction>();
-            var sha256 = new SHA256Managed();
-
-            for (int i = 0; i < transactionList.Count; i++)
-            {
-                var hashString = string.Empty;
-                var transactionBytes = System.Text.Encoding.Default.GetBytes(transactionList[i]);
-                // Double hashed.
-                var encodedString = sha256.ComputeHash(sha256.ComputeHash(transactionBytes));
-
-                for (int j = 0; j < encodedString.Length; j++)
-                {
-                    hashString += encodedString[j].ToString("X");
-                }
-
-                hashedTransactionList.Add(new Transaction { Idx = i, HashString = hashString });
-            }
-
-            hashedTransactionList.OrderBy(x => x.Idx);
-
-            Thread.Sleep(1500);
-            Console.WriteLine("[Idx] | [Hash]");
-
-            foreach (var kvp in hashedTransactionList)
-            {
-                Console.WriteLine(kvp.Idx + " | " + kvp.HashString);
-            }
-
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadLine();
-
-            return hashedTransactionList;
-        }
-
-        public static void InitBlockChain()
-        {
-            // Creates the genesis block - the first block within the chain.
-            const string data = "Genesis block";
-            const string previousHash = "0000000000000000000000000000000000000000000000000000000000000000";
-
             Console.WriteLine("Initialising blockchain...");
             Thread.Sleep(1500);
 
             Console.WriteLine("Generating genesis block...");
             Thread.Sleep(1500);
 
+            // Creates the genesis block - the first block within the chain.
+            const string previousHash = "0000000000000000000000000000000000000000000000000000000000000000";
+
+            var transactions = new List<Transaction>{ new Transaction
+            {
+                SourceAccount = new Account
+                {
+                    SortCode = 123456.ToString(),
+                    AccountNumber = 12345678.ToString()
+                },
+                DestinationAccount = new Account
+                {
+                    SortCode = 654321.ToString(),
+                    AccountNumber = 87654321.ToString()
+                },
+                TransferedAmount = 69.69m,
+                Timestamp = new DateTime(1980, 4, 14)
+            }};
+
+            var hashedTransactions = GenerateTransactionHashes(transactions);
+
+            var block = new Block
+            {
+                // We need to find the next available index position within the blockchain to put the block into.
+                Position = NextAvailableIndexPosition(),
+                TransactionCount = transactions.Count,
+                Transactions = transactions,
+                Header =
+                {
+                    PreviousHash = previousHash,
+                    Timestamp = transactions.First().Timestamp,
+                    Difficulty = Difficulty,
+                    Version = "0.1"
+                }
+            };
+
+            block.Header.MerkleRoot = ProcessMerkleRootTree(hashedTransactions);
+
             Console.WriteLine("Genesis block created...");
             Thread.Sleep(1500);
 
-            HashBlock(data, DateTime.Now.ToString(), previousHash, 0);
+            AddBlock(ValidateBlock(block));
         }
 
-        public static void AddNewBlock(string data)
+        private static void AddBlock(Block block)
         {
-            var index = blocks.Count;
-            var previousHash = GetLastHash();
+            Console.WriteLine("Current block count: " + BlockChain.Count);
+            Console.WriteLine("Adding block to blockchain...");
+            Thread.Sleep(1500);
 
-            HashBlock(data, DateTime.Now.ToString(), previousHash, index);
-        }
-
-        public static IEnumerable<string> GetAllBlocks()
-        {
-            return blocks;
-        }
-
-        private static void HashBlock(string data, string timestamp, string prevHash, int index)
-        {
-            var hash = string.Empty;
-            var nonce = 0;
-            var sha256 = new SHA256Managed();
-
-            while (!IsHashValid(hash))
+            if (GetBlockchain().Count() != block.Position)
             {
-                var hashString = string.Empty;
-                var input = string.Format(data + timestamp + prevHash + index + nonce);
-                var sha256Bytes = System.Text.Encoding.Default.GetBytes(input);
-                var encodedString = sha256.ComputeHash(sha256Bytes);
+                Console.WriteLine("Block expected position " + block.Position + " is not free within the blockchain!");
+                Console.WriteLine("Press any key to retry...");
+                Console.ReadLine();
 
-                for (int i = 0; i < encodedString.Length; i++)
-                {
-                    hashString += encodedString[i].ToString("X");
-                }
-
-                hash = hashString;
-                nonce += 1;
-
-                //Console.WriteLine(nonce.ToString() + " | " + hash);
+                AddBlock(ValidateBlock(block));
             }
 
-            Console.WriteLine("[VALID] | Nonce: " + nonce + " | Hash: " + hash);
+            BlockChain.Add(block);
 
-            blocks.Add(hash);
-
-            Console.WriteLine("Block count: " + GetAllBlocks().Count());
+            Console.WriteLine("Block added. Block count: " + BlockChain.Count());
             Console.WriteLine("Press any key to continue...");
             Console.ReadLine();
         }
 
+        private static Block ValidateBlock(Block block)
+        {
+            Console.WriteLine("Validating block...");
+            Thread.Sleep(1500);
+
+            var hash = string.Empty;
+            var nonce = 0;
+
+            Console.WriteLine("Generating valid hash...");
+            Thread.Sleep(1500);
+
+            // If the hash does not start with the required amount of zeros then it is not valid.
+            while (!IsHashValid(hash))
+            {
+                // The nonce goes into the input to be hashed for our valid block hash, so everytime the hash validation fails the input is rehashed with a new nonce value.
+                nonce += 1;
+
+                var input = string.Concat(block.Header.MerkleRoot, nonce, block.Header.PreviousHash, block.Header.Timestamp);
+
+                hash = GenerateHash(input);
+            }
+
+            block.Header.Nonce = nonce;
+            block.Header.ValidHash = hash;
+
+            Console.WriteLine("[VALID] | Nonce: " + nonce + " | Hash: " + hash);
+            Console.WriteLine("Press any key to continue...");
+            Console.ReadLine();
+
+            return block;
+        }
+
         private static string GetLastHash()
         {
-            var lastHash = blocks.Last();
+            return BlockChain.Last().Header.ValidHash;
+        }
 
-            return lastHash;
+        private static int NextAvailableIndexPosition()
+        {
+            return BlockChain.Count;
         }
 
         private static bool IsHashValid(string hash)
         {
             // Difficulty is the amount of numbers this has to satisfy.
-            // This is very low difficulty.
-            var hashValid = hash.StartsWith("00");
+            var hashValid = hash.StartsWith(Difficulty);
 
             return hashValid;
         }
 
-        private static List<string> GenerateTransactionsList()
+        private static List<Transaction> GenerateTransactionsList()
         {
-            const string transactionA = "My first block chain string";
-            const string transactionB = "My second block chain string";
-            const string transactionC = "My third block chain string";
-            const string transactionD = "My forth block chain string";
-            const string transactionE = "My fifth block chain string";
+            Console.WriteLine("Generating transactions...");
+            Thread.Sleep(1500);
 
-            var transactionsList = new List<string>
+            var rnd = new Random();
+
+            var transactionsList = new List<Transaction>();
+
+            for (var i = 0; i < rnd.Next(1, 10); i++)
             {
-                transactionA,
-                transactionB,
-                transactionC,
-                transactionD,
-                transactionE
-            };
+                transactionsList.Add(new Transaction
+                {
+                    SourceAccount = new Account
+                    {
+                        SortCode = rnd.Next(100000, 999999).ToString(),
+                        AccountNumber = rnd.Next(10000000, 99999999).ToString()
+                    },
+                    DestinationAccount = new Account
+                    {
+                        SortCode = rnd.Next(100000, 999999).ToString(),
+                        AccountNumber = rnd.Next(10000000, 99999999).ToString()
+                    },
+                    TransferedAmount = rnd.Next(1, 9999) / 100.00m,
+                    Timestamp = new DateTime(rnd.Next(2017, 2017), rnd.Next(1, 12), rnd.Next(1, 28), rnd.Next(0, 23), rnd.Next(0, 59), rnd.Next(0, 59), rnd.Next(0, 999))
+                });
+            }
 
             return transactionsList;
         }
-    }
-
-    public class Transaction
-    {
-        public int Idx { get; set; }
-
-        public string HashString { get; set; }
     }
 }
