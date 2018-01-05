@@ -1,18 +1,22 @@
 ﻿using System;
-using System.ComponentModel.DataAnnotations;
 
 namespace BlockChain.Classes
 {
     public class Transaction
     {
-        public Account SourceAccount { get; set; }
+        public Transaction()
+        {
+            Size = new Random().Next(1, 5);
+        }
 
-        public Account DestinationAccount { get; set; }
+        public Guid SourceWalletId { get; set; }
 
-        [Required]
+        public Guid DestinationWalletId { get; set; }
+
         public decimal TransferedAmount { get; set; }
 
-        [Required]
         public DateTime Timestamp { get; set; }
+
+        public int Size { get; set; } 
     }
 }

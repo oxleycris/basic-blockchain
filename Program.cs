@@ -9,27 +9,52 @@ namespace BlockChain
 {
     public class Program
     {
+        // DEBUG SETTINGS ////////////////////////////
+        private static readonly bool readLine = false;
+        private static int sleep = 500;
+        //////////////////////////////////////////////
+
+        // TODO: Make version, size etc const.
         private const string Difficulty = "00";
+        private const string Version = "0.1";
         private static readonly IList<Block> BlockChain = new List<Block>();
+        private static readonly IList<Wallet> Wallets = new List<Wallet>();
+        private static readonly IList<User> Users = new List<User>();
+        private static readonly IList<Transaction> MemPool = new List<Transaction>();
 
         public static void Main(string[] args)
         {
+            // Generate a genesis user, and their wallet.
+            GenerateGenesisUserWithWalletId();
+
             // If the blockchain has nothing in it then initialise it, and add the genesis block to it.
             if (BlockChain.Count == 0)
             {
                 InitiliseBlockChain();
             }
 
-            var blockchain = GetBlockchain();
+            // Generate some dummy users to use for our transactions demo.
+            GenerateUsersWithWalletIds();
 
-            // For the sake of demo we will add 4 blocks to the blockchain, once the genesis block has been created.
-            for (var i = 0; i < 3; i++)
+            TransferGenesisFundsToUsers();
+
+            // Set up some random transactions from within the user group.
+            GenerateTransactionsList();
+
+            var memPool = GetMemPool().ToList();
+
+            while (memPool.Any())
             {
-                // Set up some random transactions.
-                var transactions = GenerateTransactionsList();
+                // TODO: Collect transactions based on whether their size fits within a block size.
+                var transactionsToProcess = memPool.Take(5).ToList();
+
+                foreach (var transaction in transactionsToProcess)
+                {
+                    memPool.Remove(transaction);
+                }
 
                 // Hash all the transactional data and return a list of the hashes created. 
-                var hashedTransactions = GenerateTransactionHashes(transactions);
+                var hashedTransactions = GenerateTransactionHashes(transactionsToProcess);
 
                 // Process the merkle tree, to return the merkle root, using the hashed values from above.
                 var merkleRoot = ProcessMerkleRootTree(hashedTransactions);
@@ -38,15 +63,15 @@ namespace BlockChain
                 var block = new Block
                 {
                     Position = NextAvailableIndexPosition(),
-                    TransactionCount = transactions.Count,
-                    Transactions = transactions,
+                    TransactionCount = transactionsToProcess.Count(),
+                    Transactions = transactionsToProcess,
                     Header =
                     {
                         PreviousHash = GetLastHash(),
                         Timestamp = DateTime.Now,
                         Difficulty = Difficulty,
                         MerkleRoot = merkleRoot,
-                        Version = "0.1"
+                        Version = Version
                     }
                 };
 
@@ -58,12 +83,88 @@ namespace BlockChain
             }
 
             // Profit!
-            blockchain = GetBlockchain();
+
+            Console.WriteLine("OxCoin balances...");
+            Console.WriteLine("Name    |    Verified    |    Unverified");
+
+            foreach (var user in GetUsers())
+            {
+                var walletId = GetWallet(GetUser(user.EmailAddress).Id).Id;
+                var verifiedBalance = GetBalance(walletId, out decimal unVerifiedBalance);
+
+                Console.WriteLine(user.GivenName + " " + user.FamilyName + "  |  " + verifiedBalance + "  |  " + (verifiedBalance + unVerifiedBalance) + "(" + unVerifiedBalance + " unverified)");
+            }
+
+            Console.ReadLine();
         }
 
-        private static IEnumerable<Block> GetBlockchain()
+        private static decimal GetBalance(Guid walletId, out decimal unVerifiedBalance)
         {
-            return BlockChain.OrderBy(x => x.Position).ToList();
+            unVerifiedBalance = 0.00m;
+            var balance = 0.00m;
+            var verifiedTransactions = new List<Transaction>();
+
+            // Get all the verified transactions from the blockchain together.
+            foreach (var block in GetBlockchain())
+            {
+                verifiedTransactions.AddRange(block.Transactions);
+            }
+
+            balance = verifiedTransactions.Where(x => x.DestinationWalletId == walletId).Sum(x => x.TransferedAmount);
+            balance -= verifiedTransactions.Where(x => x.SourceWalletId == walletId).Sum(x => x.TransferedAmount);
+
+            // TODO: Populate unVerifiedBalance from from the MemPool. This won't work yet as we always clear the MemPool out. 
+
+            return balance;
+        }
+
+        private static void TransferGenesisFundsToUsers()
+        {
+            Console.WriteLine("Generating transactions...");
+            Thread.Sleep(sleep);
+
+            var transactionsList = new List<Transaction>();
+
+            foreach (var wallet in GetWallets().Where(x => x.UserId != GetGenesisUser().Id))
+            {
+                var sourceWalletId = GetGenesisUser().Id;
+                var destinationWalletId = wallet.Id;
+
+                transactionsList.Add(new Transaction
+                {
+                    SourceWalletId = sourceWalletId,
+                    DestinationWalletId = destinationWalletId,
+                    TransferedAmount = 50m,
+                    Timestamp = DateTime.Now
+                });
+            }
+
+            var hashedTransactions = GenerateTransactionHashes(transactionsList);
+
+            // Process the merkle tree, to return the merkle root, using the hashed values from above.
+            var merkleRoot = ProcessMerkleRootTree(hashedTransactions);
+
+            // Stick the transactions list, previous hash value, merkle root, and a load of other data into a block.
+            var block = new Block
+            {
+                Position = NextAvailableIndexPosition(),
+                TransactionCount = transactionsList.Count,
+                Transactions = transactionsList,
+                Header =
+                {
+                    PreviousHash = GetLastHash(),
+                    Timestamp = DateTime.Now,
+                    Difficulty = Difficulty,
+                    MerkleRoot = merkleRoot,
+                    Version = Version
+                }
+            };
+
+            // Process this block to generate a valid hash, checking against our difficulty level.
+            var validBlock = ValidateBlock(block);
+
+            // Once valid, add to the blockchain.
+            AddBlock(validBlock);
         }
 
         private static string ProcessMerkleRootTree(IEnumerable<Tuple<int, string>> hashKvps)
@@ -97,8 +198,9 @@ namespace BlockChain
                     {
                         passCount++;
 
-                        Thread.Sleep(1200);
+                        Thread.Sleep(sleep);
                         Console.WriteLine("Pass: " + passCount);
+
                         Tuple<int, string> lastHashKvp = null;
 
                         // If there are an odd number of items to process then we remove the last and save it for later, allowing us to pair up an even number.
@@ -138,14 +240,20 @@ namespace BlockChain
                             Console.WriteLine(workingHashKvp.Item1 + " | " + workingHashKvp.Item2);
                         }
 
-                        Console.WriteLine("Press any key to continue...");
-                        Console.ReadLine();
+                        if (readLine)
+                        {
+                            Console.WriteLine("Press any key to continue...");
+                            Console.ReadLine();
+                        }
                     }
                 }
 
                 Console.WriteLine("Merkle root: " + workingHashKvpList.First().Item2);
-                Console.WriteLine("Press any key to continue...");
-                Console.ReadLine();
+                if (readLine)
+                {
+                    Console.WriteLine("Press any key to continue...");
+                    Console.ReadLine();
+                }
 
                 return workingHashKvpList.First().Item2;
             }
@@ -155,8 +263,11 @@ namespace BlockChain
             var root = GenerateHash(hashKvpsToProcess.First().Item2, hashKvpsToProcess.First().Item2);
 
             Console.WriteLine("Merkle root: " + root);
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadLine();
+            if (readLine)
+            {
+                Console.WriteLine("Press any key to continue...");
+                Console.ReadLine();
+            }
 
             return root;
         }
@@ -179,7 +290,7 @@ namespace BlockChain
                 transactionHashKvpList.Add(new Tuple<int, string>(i, hash));
             }
 
-            Thread.Sleep(1500);
+            Thread.Sleep(sleep);
             Console.WriteLine("[Idx] | [Hash]");
 
             foreach (var kvp in transactionHashKvpList.OrderBy(x => x.Item1))
@@ -187,27 +298,25 @@ namespace BlockChain
                 Console.WriteLine(kvp.Item1 + " | " + kvp.Item2);
             }
 
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadLine();
+            if (readLine)
+            {
+                Console.WriteLine("Press any key to continue...");
+                Console.ReadLine();
+            }
 
             return transactionHashKvpList;
         }
 
         private static string ConcatenateTransactionData(Transaction transaction)
         {
-            return string.Format(transaction.SourceAccount.SortCode +
-                                 transaction.SourceAccount.AccountNumber +
-                                 transaction.DestinationAccount.SortCode +
-                                 transaction.DestinationAccount.AccountNumber +
-                                 transaction.TransferedAmount +
-                                 transaction.Timestamp);
+            return string.Format(transaction.SourceWalletId.ToString() +
+                                 transaction.DestinationWalletId.ToString() +
+                                 transaction.Timestamp.ToString());
         }
 
-        private static string GenerateHash(string firstString, string secondString)
+        private static string GenerateHash(string firstInput, string secondInput)
         {
-            var input = string.Concat(firstString, secondString);
-
-            return GenerateHash(input);
+            return GenerateHash(string.Concat(firstInput, secondInput));
         }
 
         private static string GenerateHash(string input)
@@ -228,27 +337,19 @@ namespace BlockChain
         public static void InitiliseBlockChain()
         {
             Console.WriteLine("Initialising blockchain...");
-            Thread.Sleep(1500);
+            Thread.Sleep(sleep);
 
             Console.WriteLine("Generating genesis block...");
-            Thread.Sleep(1500);
+            Thread.Sleep(sleep);
 
             // Creates the genesis block - the first block within the chain.
             const string previousHash = "0000000000000000000000000000000000000000000000000000000000000000";
 
             var transactions = new List<Transaction>{ new Transaction
             {
-                SourceAccount = new Account
-                {
-                    SortCode = 123456.ToString(),
-                    AccountNumber = 12345678.ToString()
-                },
-                DestinationAccount = new Account
-                {
-                    SortCode = 654321.ToString(),
-                    AccountNumber = 87654321.ToString()
-                },
-                TransferedAmount = 69.69m,
+                SourceWalletId = new Guid("00000000-0000-0000-0000-000000000000"),
+                DestinationWalletId = GetWallet(GetGenesisUser().Id).Id,
+                TransferedAmount = 500.00m,
                 Timestamp = new DateTime(1980, 4, 14)
             }};
 
@@ -263,25 +364,25 @@ namespace BlockChain
                 Header =
                 {
                     PreviousHash = previousHash,
-                    Timestamp = transactions.First().Timestamp,
+                    Timestamp = DateTime.Now,
                     Difficulty = Difficulty,
-                    Version = "0.1"
+                    Version = Version
                 }
             };
 
             block.Header.MerkleRoot = ProcessMerkleRootTree(hashedTransactions);
 
             Console.WriteLine("Genesis block created...");
-            Thread.Sleep(1500);
+            Thread.Sleep(sleep);
 
             AddBlock(ValidateBlock(block));
         }
 
         private static void AddBlock(Block block)
         {
-            Console.WriteLine("Current block count: " + BlockChain.Count);
+            Console.WriteLine("Current block count: " + GetBlockchain().Count());
             Console.WriteLine("Adding block to blockchain...");
-            Thread.Sleep(1500);
+            Thread.Sleep(sleep);
 
             if (GetBlockchain().Count() != block.Position)
             {
@@ -294,21 +395,24 @@ namespace BlockChain
 
             BlockChain.Add(block);
 
-            Console.WriteLine("Block added. Block count: " + BlockChain.Count());
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadLine();
+            Console.WriteLine("Block added. Block count: " + GetBlockchain().Count());
+            if (readLine)
+            {
+                Console.WriteLine("Press any key to continue...");
+                Console.ReadLine();
+            }
         }
 
         private static Block ValidateBlock(Block block)
         {
             Console.WriteLine("Validating block...");
-            Thread.Sleep(1500);
+            Thread.Sleep(sleep);
 
             var hash = string.Empty;
             var nonce = 0;
 
             Console.WriteLine("Generating valid hash...");
-            Thread.Sleep(1500);
+            Thread.Sleep(sleep);
 
             // If the hash does not start with the required amount of zeros then it is not valid.
             while (!IsHashValid(hash))
@@ -325,20 +429,73 @@ namespace BlockChain
             block.Header.ValidHash = hash;
 
             Console.WriteLine("[VALID] | Nonce: " + nonce + " | Hash: " + hash);
-            Console.WriteLine("Press any key to continue...");
-            Console.ReadLine();
+            if (readLine)
+            {
+                Console.WriteLine("Press any key to continue...");
+                Console.ReadLine();
+            }
 
             return block;
         }
 
-        private static string GetLastHash()
+        private static void GenerateTransactionsList()
         {
-            return BlockChain.Last().Header.ValidHash;
+            Console.WriteLine("Generating transactions...");
+            Thread.Sleep(sleep);
+
+            var random = new Random();
+            var idx = random.Next(10, 30);
+
+            var transactionsList = new List<Transaction>();
+
+            for (var i = 0; i < idx; i++)
+            {
+                var sourceWalletId = GetRandomWalletId();
+                var destinationWalletId = GetRandomWalletId(sourceWalletId);
+
+                MemPool.Add(new Transaction
+                {
+                    SourceWalletId = sourceWalletId,
+                    DestinationWalletId = destinationWalletId,
+                    TransferedAmount = random.Next(1, 99) / 100.00m,
+                    Timestamp = new DateTime(random.Next(2017, 2017), random.Next(1, 12), random.Next(1, 28), random.Next(0, 23), random.Next(0, 59), random.Next(0, 59), random.Next(0, 999))
+                });
+            }
+
+            Console.WriteLine("Transactions created: " + idx);
+            if (readLine)
+            {
+                Console.WriteLine("Press any key to continue...");
+                Console.ReadLine();
+            }
         }
 
-        private static int NextAvailableIndexPosition()
+        private static void GenerateUsersWithWalletIds()
         {
-            return BlockChain.Count;
+            var users = new List<User>
+            {
+                new User{ GivenName = "Alistair", FamilyName = "Evans", EmailAddress = "alistair.evans@7layer.net" },
+                new User{ GivenName = "Owain", FamilyName = "Richardson", EmailAddress = "owain.richardson@7layer.net" },
+                new User{ GivenName = "Matt", FamilyName = "Stahl-Coote", EmailAddress = "matt.stahl-coote@7layer.net" },
+                new User{ GivenName = "Chris", FamilyName = "Bedwell", EmailAddress = "Chris.Bedwell@7layer.net" },
+                new User{ GivenName = "John", FamilyName = "Rudden", EmailAddress = "john.rudden@7layer.net" }
+            };
+
+            foreach (var user in users)
+            {
+                // TODO: Create wrappers for these Add operations.
+                Users.Add(user);
+                Wallets.Add(new Wallet { UserId = user.Id });
+            }
+        }
+
+        private static void GenerateGenesisUserWithWalletId()
+        {
+            var genesisUser = new User { GivenName = "Cris", FamilyName = "Oxley", EmailAddress = "cris.oxley@7layer.net" };
+
+            // TODO: Create wrappers for these Add operations.
+            Users.Add(genesisUser);
+            Wallets.Add(new Wallet { UserId = GetGenesisUser().Id });
         }
 
         private static bool IsHashValid(string hash)
@@ -349,35 +506,54 @@ namespace BlockChain
             return hashValid;
         }
 
-        private static List<Transaction> GenerateTransactionsList()
+        private static Wallet GetWallet(Guid userId)
         {
-            Console.WriteLine("Generating transactions...");
-            Thread.Sleep(1500);
+            return Wallets.First(x => x.UserId == userId);
+        }
 
-            var rnd = new Random();
+        private static Guid GetRandomWalletId(Guid? idToExclude = null)
+        {
+            return Wallets.Where(x => x.Id != idToExclude).ToList()[new Random().Next(0, Wallets.Count - 1)].Id;
+        }
 
-            var transactionsList = new List<Transaction>();
+        private static User GetUser(string emailAddress)
+        {
+            return Users.FirstOrDefault(x => x.EmailAddress.ToLower() == emailAddress.ToLower());
+        }
 
-            for (var i = 0; i < rnd.Next(1, 10); i++)
-            {
-                transactionsList.Add(new Transaction
-                {
-                    SourceAccount = new Account
-                    {
-                        SortCode = rnd.Next(100000, 999999).ToString(),
-                        AccountNumber = rnd.Next(10000000, 99999999).ToString()
-                    },
-                    DestinationAccount = new Account
-                    {
-                        SortCode = rnd.Next(100000, 999999).ToString(),
-                        AccountNumber = rnd.Next(10000000, 99999999).ToString()
-                    },
-                    TransferedAmount = rnd.Next(1, 9999) / 100.00m,
-                    Timestamp = new DateTime(rnd.Next(2017, 2017), rnd.Next(1, 12), rnd.Next(1, 28), rnd.Next(0, 23), rnd.Next(0, 59), rnd.Next(0, 59), rnd.Next(0, 999))
-                });
-            }
+        private static User GetGenesisUser()
+        {
+            return Users.First(x => x.EmailAddress == "cris.oxley@7layer.net");
+        }
 
-            return transactionsList;
+        private static IEnumerable<Block> GetBlockchain()
+        {
+            return BlockChain.OrderBy(x => x.Position).ToList();
+        }
+
+        private static IEnumerable<Transaction> GetMemPool()
+        {
+            return MemPool;
+        }
+
+        private static IEnumerable<User> GetUsers()
+        {
+            return Users;
+        }
+
+        private static IEnumerable<Wallet> GetWallets()
+        {
+            return Wallets;
+        }
+
+        private static string GetLastHash()
+        {
+            return BlockChain.Last().Header.ValidHash;
+        }
+
+        private static int NextAvailableIndexPosition()
+        {
+            return BlockChain.Count;
         }
     }
 }
