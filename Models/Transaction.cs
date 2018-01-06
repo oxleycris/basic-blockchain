@@ -1,13 +1,10 @@
 ﻿using System;
 
-namespace BlockChain.Classes
+namespace BlockChain.Models
 {
     public class Transaction
     {
-        public Transaction()
-        {
-            Size = new Random().Next(1, 5);
-        }
+        public Guid Id { get; } = Guid.NewGuid();
 
         public Guid SourceWalletId { get; set; }
 
@@ -15,8 +12,10 @@ namespace BlockChain.Classes
 
         public decimal TransferedAmount { get; set; }
 
+        public decimal TransferFee { get; set; } = Math.Round(new Random().Next(1, 9999) * 0.000001m, 8);
+
         public DateTime Timestamp { get; set; }
 
-        public int Size { get; set; } 
+        public int Size { get; set; } = new Random().Next(1, 8);
     }
 }

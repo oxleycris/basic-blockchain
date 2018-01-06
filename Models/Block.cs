@@ -2,7 +2,7 @@
 using System.Collections.Generic;
 using System.Security.Cryptography;
 
-namespace BlockChain.Classes
+namespace BlockChain.Models
 {
     public class Block
     {
@@ -17,14 +17,11 @@ namespace BlockChain.Classes
 
         public int Position { get; set; }
 
-        /// <summary>
-        /// 128-bit unique number
-        /// </summary>
-        public string MagicNumber { get; set; }
+        public string MagicNumber { get; }
 
         public int MaximumBlockSize { get; set; }
 
-        public int BlockSize { get; set; } // Sum of all transaction sizes
+        public int BlockSize { get; set; } // Sum of all transaction sizes contained within the block.
 
         public BlockHeader Header { get; set; } = new BlockHeader();
 
