@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using BlockChain.Data;
 using BlockChain.Models;
 
 namespace BlockChain
@@ -18,24 +19,12 @@ namespace BlockChain
 
         private const string Difficulty = "00";
         private const string Version = "0.1";
-        private const int MaximumBlockSize = 48;
+        private const int MaximumBlockSize = 1000000;
 
         private static readonly IList<Block> BlockChain = new List<Block>();
-        private static readonly IList<Wallet> Wallets = new List<Wallet>();
-        private static readonly IList<User> Users = new List<User>();
-        private static readonly IList<Transaction> MemPool = new List<Transaction>();
 
         public static void Main(string[] args)
         {
-            if (!GetUsers().Any() && !GetWallets().Any())
-            {
-                // Generate a genesis user, and their wallet.
-                GenerateGenesisUserWithWalletId();
-
-                // Generate some dummy users to use for our transactions demo.
-                GenerateUsersWithWalletIds();
-            }
-
             // Initialise the blockchain, and add the genesis block to it.
             if (!BlockChain.Any())
             {
@@ -43,9 +32,6 @@ namespace BlockChain
 
                 TransferGenesisFundsToUsers();
             }
-
-            // Set up some random transactions from within the user group.
-            GenerateTransactions();
 
             while (GetMemPool().Any())
             {
@@ -86,7 +72,6 @@ namespace BlockChain
                     // Profit!
 
                     #region Balances and Hash List
-
                     Console.WriteLine();
                     Console.WriteLine("OxCoin balances...");
                     Console.WriteLine("Name                            |  Verified    |  Unverified");
@@ -112,16 +97,16 @@ namespace BlockChain
                         Console.WriteLine(fullName + fnSpaces + "  |  " + verifiedBalance + vbSpaces + "  |  " + (verifiedBalance + unVerifiedBalance) + " (" + unVerifiedBalance + " unverified)");
                     }
 
+                    Console.WriteLine("Miner balance: " + GetMinerBalance() + " OxCoins.");
                     #endregion
                 }
                 else
                 {
-                    Console.WriteLine("There are not enough transactions within the MemPool - Please try again later...");
-
-                    break;
+                    Console.WriteLine("Waiting for the MemPool to populate...");
                 }
             }
 
+            Console.WriteLine("The MemPool is now empty.");
             Console.WriteLine("Blockchain valid hashes:");
             Console.WriteLine("Index  |  Size  |  Nonce  |  Hash");
             foreach (var b in GetBlockchain().OrderBy(x => x.Position))
@@ -138,8 +123,7 @@ namespace BlockChain
         private static IEnumerable<Transaction> GetMemPoolTransactionsToProcess()
         {
             var memPool = GetMemPool().ToList();
-            var memPoolWorkingList = memPool.Where(x => x.Timestamp <= DateTime.Now.AddMonths(-3))
-                                            .ToList();
+            var memPoolWorkingList = memPool.Where(x => x.Timestamp <= DateTime.Now.AddMonths(-3)).ToList();
 
             foreach (var transaction in memPoolWorkingList)
             {
@@ -174,21 +158,27 @@ namespace BlockChain
                         }
 
                         memPoolWorkingList = memPoolWorkingList.Where(x => x.Size <= maximumTransactionSize).ToList();
+
+                        // If there are no transactions left in the MemPool,
+                        // or the smallest available size transaction in the MemPool is bigger than our remaining capacity then process this list as is.
+                        if (!memPoolWorkingList.Any() || !(memPoolWorkingList.OrderBy(x => x.Size).First().Size < maximumTransactionSize))
+                        {
+                            return transactionsToProcess;
+                        }
                     }
                 }
 
-                if (maximumTransactionSize > 0)
+                if (transactionsToProcess.Any())
                 {
-                    // Failure to populate a full block - roll back..
                     foreach (var transaction in transactionsToProcess)
                     {
                         AddToMemPool(transaction);
                     }
-
-                    transactionsToProcess.Clear();
-
-                    return transactionsToProcess;
                 }
+
+                transactionsToProcess.Clear();
+
+                return transactionsToProcess;
             }
 
             return transactionsToProcess;
@@ -196,12 +186,20 @@ namespace BlockChain
 
         private static void AddToMemPool(Transaction transaction)
         {
-            MemPool.Add(transaction);
+            using (var db = new BlockChainDbContext())
+            {
+                db.Transactions.Add(transaction);
+                db.SaveChanges();
+            }
         }
 
         private static void DeleteFromMemPool(Transaction transaction)
         {
-            MemPool.Remove(transaction);
+            using (var db = new BlockChainDbContext())
+            {
+                db.Transactions.Remove(transaction);
+                db.SaveChanges();
+            }
         }
 
         private static decimal GetBalance(Guid walletId, out decimal unVerifiedBalance)
@@ -237,10 +235,12 @@ namespace BlockChain
             Thread.Sleep(Sleep);
 
             var transactionsList = new List<Transaction>();
+            var genesisUser = GetGenesisUser();
+            var wallets = GetWallets().ToList();
 
-            foreach (var wallet in GetWallets().Where(x => x.UserId != GetGenesisUser().Id))
+            foreach (var wallet in wallets.Where(x => x.UserId != genesisUser.Id))
             {
-                var sourceWalletId = GetWallet(GetGenesisUser().Id).Id;
+                var sourceWalletId = GetWallet(genesisUser.Id).Id;
                 var destinationWalletId = wallet.Id;
 
                 transactionsList.Add(new Transaction
@@ -549,66 +549,6 @@ namespace BlockChain
             return block;
         }
 
-        private static void GenerateTransactions()
-        {
-            Console.WriteLine("Generating transactions...");
-            Thread.Sleep(Sleep);
-
-            var random = new Random();
-            var idx = random.Next(50, 2000);
-
-            for (var i = 0; i < idx; i++)
-            {
-                var sourceWalletId = GetRandomWalletId();
-                var destinationWalletId = GetRandomWalletId(sourceWalletId);
-
-                AddToMemPool(new Transaction
-                {
-                    SourceWalletId = sourceWalletId,
-                    DestinationWalletId = destinationWalletId,
-                    TransferedAmount = Math.Round(random.Next(1, 999) / 1000.1m, 8),
-                    Timestamp = new DateTime(random.Next(2017, 2017), random.Next(1, 12), random.Next(1, 28), random.Next(0, 23), random.Next(0, 59), random.Next(0, 59), random.Next(0, 999))
-                });
-            }
-
-            Console.WriteLine("Transactions created: " + idx);
-            if (ReadLine)
-            {
-                Console.WriteLine("Press any key to continue...");
-                Console.ReadLine();
-            }
-        }
-
-        private static void GenerateUsersWithWalletIds()
-        {
-            var users = new List<User>
-            {
-                new User{ GivenName = "Alistair", FamilyName = "Evans", EmailAddress = "alistair.evans@7layer.net" },
-                new User{ GivenName = "Owain", FamilyName = "Richardson", EmailAddress = "owain.richardson@7layer.net" },
-                new User{ GivenName = "Matt", FamilyName = "Stahl-Coote", EmailAddress = "matt.stahl-coote@7layer.net" },
-                new User{ GivenName = "Chris", FamilyName = "Bedwell", EmailAddress = "chris.bedwell@7layer.net" },
-                new User{ GivenName = "Luke", FamilyName = "Hunt", EmailAddress = "luke.hunt@7layer.net" },
-                new User{ GivenName = "Tracey", FamilyName = "Young", EmailAddress = "tracey.young@7layer.net" },
-                new User{ GivenName = "Dan", FamilyName = "Blackmore", EmailAddress = "dan.blackmore@7layer.net" },
-                new User{ GivenName = "Craig", FamilyName = "Jenkins", EmailAddress = "craig.jenkins@7layer.net" },
-                new User{ GivenName = "John", FamilyName = "Rudden", EmailAddress = "john.rudden@7layer.net" }
-            };
-
-            foreach (var user in users)
-            {
-                AddUser(user);
-                AddWallet(new Wallet { UserId = user.Id });
-            }
-        }
-
-        private static void GenerateGenesisUserWithWalletId()
-        {
-            var genesisUser = new User { GivenName = "Cris", FamilyName = "Oxley", EmailAddress = "cris.oxley@7layer.net" };
-
-            AddUser(genesisUser);
-            AddWallet(new Wallet { UserId = GetGenesisUser().Id });
-        }
-
         private static bool IsHashValid(string hash)
         {
             // Difficulty is the amount of numbers this has to satisfy.
@@ -619,13 +559,16 @@ namespace BlockChain
 
         private static Wallet GetWallet(Guid userId)
         {
-            return Wallets.First(x => x.UserId == userId);
+            using (var db = new BlockChainDbContext())
+            {
+                return db.Wallets.First(x => x.UserId == userId);
+            }
         }
 
-        private static Guid GetRandomWalletId(Guid? idToExclude = null)
-        {
-            return GetWallets().Where(x => x.Id != idToExclude).ToList()[new Random().Next(0, GetWallets().Count() - 1)].Id;
-        }
+        //private static Guid GetRandomWalletId(Guid? idToExclude = null)
+        //{
+        //    return GetWallets().Where(x => x.Id != idToExclude).ToList()[new Random().Next(0, GetWallets().Count() - 1)].Id;
+        //}
 
         private static decimal GetMinerBalance()
         {
@@ -641,12 +584,18 @@ namespace BlockChain
 
         private static User GetUser(string emailAddress)
         {
-            return GetUsers().FirstOrDefault(x => x.EmailAddress.ToLower() == emailAddress.ToLower());
+            using (var db = new BlockChainDbContext())
+            {
+                return db.Users.FirstOrDefault(x => x.EmailAddress.ToLower() == emailAddress.ToLower());
+            }
         }
 
         private static User GetGenesisUser()
         {
-            return GetUsers().First(x => x.EmailAddress == "cris.oxley@7layer.net");
+            using (var db = new BlockChainDbContext())
+            {
+                return db.Users.First(x => x.EmailAddress == "cris.oxley@7layer.net");
+            }
         }
 
         private static IEnumerable<Block> GetBlockchain()
@@ -656,27 +605,29 @@ namespace BlockChain
 
         private static IEnumerable<Transaction> GetMemPool()
         {
-            return MemPool;
-        }
-
-        private static void AddWallet(Wallet wallet)
-        {
-            Wallets.Add(wallet);
-        }
-
-        private static void AddUser(User user)
-        {
-            Users.Add(user);
+            using (var db = new BlockChainDbContext())
+            {
+                foreach (var transaction in db.Transactions)
+                {
+                    yield return transaction;
+                }
+            }
         }
 
         private static IEnumerable<User> GetUsers()
         {
-            return Users;
+            using (var db = new BlockChainDbContext())
+            {
+                return db.Users.ToList();
+            }
         }
 
         private static IEnumerable<Wallet> GetWallets()
         {
-            return Wallets;
+            using (var db = new BlockChainDbContext())
+            {
+                return db.Wallets.ToList();
+            }
         }
 
         private static string GetLastHash()
