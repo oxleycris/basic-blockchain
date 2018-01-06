@@ -1,15 +1,30 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Security.Cryptography;
 
 namespace BlockChain.Classes
 {
     public class Block
     {
+        public Block()
+        {
+            var bytes = new byte[16];
+            var rng = new RNGCryptoServiceProvider();
+            rng.GetBytes(bytes);
+
+            MagicNumber = BitConverter.ToString(bytes).Replace("-", "").ToLower();
+        }
+
         public int Position { get; set; }
 
-        public Guid MagicNumber { get; set; } = Guid.NewGuid();
+        /// <summary>
+        /// 128-bit unique number
+        /// </summary>
+        public string MagicNumber { get; set; }
 
-        public int BlockSize { get; set; } // Size in bytes of total block.
+        public int MaximumBlockSize { get; set; }
+
+        public int BlockSize { get; set; } // Sum of all transaction sizes
 
         public BlockHeader Header { get; set; } = new BlockHeader();
 
