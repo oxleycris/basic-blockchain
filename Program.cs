@@ -206,6 +206,7 @@ namespace BlockChain
 
         private static decimal GetBalance(Guid walletId, out decimal unVerifiedBalance)
         {
+            // TODO: Somewhere, check a balance before allowing a transaction to occur.
             decimal uvb;
             decimal balance;
             var transactionsList = new List<Transaction>();
@@ -561,7 +562,7 @@ namespace BlockChain
                 var sourceWalletId = GetRandomWalletId();
                 var destinationWalletId = GetRandomWalletId(sourceWalletId);
 
-                MemPool.Add(new Transaction
+                AddToMemPool(new Transaction
                 {
                     SourceWalletId = sourceWalletId,
                     DestinationWalletId = destinationWalletId,
@@ -623,7 +624,7 @@ namespace BlockChain
 
         private static Guid GetRandomWalletId(Guid? idToExclude = null)
         {
-            return Wallets.Where(x => x.Id != idToExclude).ToList()[new Random().Next(0, Wallets.Count - 1)].Id;
+            return GetWallets().Where(x => x.Id != idToExclude).ToList()[new Random().Next(0, GetWallets().Count() - 1)].Id;
         }
 
         private static decimal GetMinerBalance()
@@ -637,14 +638,15 @@ namespace BlockChain
 
             return transactions.Sum(x => x.TransferFee);
         }
+
         private static User GetUser(string emailAddress)
         {
-            return Users.FirstOrDefault(x => x.EmailAddress.ToLower() == emailAddress.ToLower());
+            return GetUsers().FirstOrDefault(x => x.EmailAddress.ToLower() == emailAddress.ToLower());
         }
 
         private static User GetGenesisUser()
         {
-            return Users.First(x => x.EmailAddress == "cris.oxley@7layer.net");
+            return GetUsers().First(x => x.EmailAddress == "cris.oxley@7layer.net");
         }
 
         private static IEnumerable<Block> GetBlockchain()
@@ -679,12 +681,12 @@ namespace BlockChain
 
         private static string GetLastHash()
         {
-            return BlockChain.Last().Header.ValidHash;
+            return GetBlockchain().Last().Header.ValidHash;
         }
 
         private static int NextAvailableIndexPosition()
         {
-            return BlockChain.Count;
+            return GetBlockchain().Count();
         }
     }
 }
