@@ -12,63 +12,45 @@ namespace BlockChain
 {
     public class Program
     {
+        // General TODO LIST 
+        // TODO: Somewhere, check a balance before allowing a transaction to occur.
+
         // DEBUG SETTINGS ////////////////////////////
-        private static readonly bool ReadLine = false;
-        private static int Sleep = 50;
+        private const bool ReadLine = false;
+        private const int Sleep = 50;
         //////////////////////////////////////////////
 
         private const string Difficulty = "00";
         private const string Version = "0.1";
         private const int MaximumBlockSize = 1000000;
 
-        private static readonly IList<Block> BlockChain = new List<Block>();
+        private static readonly IList<Block> Blockchain = new List<Block>();
 
         public static void Main(string[] args)
         {
             // Initialise the blockchain, and add the genesis block to it.
-            if (!BlockChain.Any())
+            if (!Blockchain.Any())
             {
-                InitiliseBlockChain();
+                InitiliseBlockchain();
 
                 TransferGenesisFundsToUsers();
             }
 
-            while (GetMemPool().Any())
+            // Miner.
+            // Eventually this will just run as a constant process.
+            // Oneday, someday, somehow, somewhere...
+            while (GetTransactionPool().Any())
             {
-                var transactionsToProcess = GetMemPoolTransactionsToProcess().ToList();
+                var transactionsToProcess = GetTransactionsToProcess().ToList();
 
                 if (transactionsToProcess.Count > 0)
                 {
-                    // Hash all the transactional data and return a list of the hashes created. 
-                    var hashedTransactions = GenerateTransactionHashes(transactionsToProcess);
-
-                    // Process the merkle tree, to return the merkle root, using the hashed values from above.
-                    var merkleRoot = ProcessMerkleRootTree(hashedTransactions);
-
-                    // Stick the transactions list, previous hash value, merkle root, and a load of other data into a block.
-                    var block = new Block
-                    {
-                        MaximumBlockSize = MaximumBlockSize,
-                        BlockSize = transactionsToProcess.Sum(x => x.Size),
-                        Position = NextAvailableIndexPosition(),
-                        TransactionCount = transactionsToProcess.Count,
-                        Transactions = transactionsToProcess,
-                        Header = new BlockHeader
-                        {
-                            PreviousHash = GetLastHash(),
-                            Timestamp = DateTime.Now,
-                            Difficulty = Difficulty,
-                            MerkleRoot = merkleRoot,
-                            Version = Version
-                        }
-                    };
-
-                    // Process this block to generate a valid hash, checking against our difficulty level.
+                    var block = CreateBlock(transactionsToProcess);
                     var validBlock = ValidateBlock(block);
 
-                    // Once valid, add to the blockchain.
-                    AddBlock(validBlock);
+                    AddToBlockchain(validBlock);
 
+                    // ???
                     // Profit!
 
                     #region Balances and Hash List
@@ -102,11 +84,12 @@ namespace BlockChain
                 }
                 else
                 {
-                    Console.WriteLine("Waiting for the MemPool to populate...");
+                    Console.WriteLine("Waiting for the transaction pool to populate...");
                 }
             }
 
-            Console.WriteLine("The MemPool is now empty.");
+            #region Transaction pool empty
+            Console.WriteLine("The transaction pool is now empty.");
             Console.WriteLine("Blockchain valid hashes:");
             Console.WriteLine("Index  |  Size  |  Nonce  |  Hash");
             foreach (var b in GetBlockchain().OrderBy(x => x.Position))
@@ -118,50 +101,84 @@ namespace BlockChain
             // Finished - beep!
             Console.Beep();
             Console.ReadLine();
+            #endregion
         }
 
-        private static IEnumerable<Transaction> GetMemPoolTransactionsToProcess()
+        /// <summary>
+        /// Creates an unvalidated block using the transaction list to generate the merkle root hash.
+        /// </summary>
+        /// <param name="transactionsToProcess">The list of transactions that the block will contain.</param>
+        /// <returns>The unvalidated block.</returns>
+        private static Block CreateBlock(IList<Transaction> transactionsToProcess)
         {
-            var memPool = GetMemPool().ToList();
-            var memPoolWorkingList = memPool.Where(x => x.Timestamp <= DateTime.Now.AddMonths(-3)).ToList();
+            var hashedTransactions = GenerateTransactionHashes(transactionsToProcess);
+            var merkleRootHash = GenerateMerkleRootHash(hashedTransactions);
 
-            foreach (var transaction in memPoolWorkingList)
+            var block = new Block
             {
-                memPool.Remove(transaction);
+                MaximumBlockSize = MaximumBlockSize,
+                BlockSize = transactionsToProcess.Sum(x => x.Size),
+                Position = NextAvailableIndexPosition(),
+                TransactionCount = transactionsToProcess.Count,
+                Transactions = transactionsToProcess,
+                Header = new BlockHeader
+                {
+                    PreviousHash = GetLastHash(),
+                    Timestamp = DateTime.Now,
+                    Difficulty = Difficulty,
+                    MerkleRootHash = merkleRootHash,
+                    Version = Version
+                }
+            };
+
+            return block;
+        }
+
+        /// <summary>
+        /// Gets transactions from the transaction pool, any that are older than our date cut-off, and then in descending order of size.
+        /// </summary>
+        /// <returns>A list of transactions to process.</returns>
+        private static IEnumerable<Transaction> GetTransactionsToProcess()
+        {
+            var transactionPool = GetTransactionPool().ToList();
+            var workingList = transactionPool.Where(x => x.Timestamp <= DateTime.Now.AddMonths(-3)).ToList();
+
+            foreach (var transaction in workingList)
+            {
+                transactionPool.Remove(transaction);
             }
 
-            // Add transactions in order of their size.
-            memPoolWorkingList.AddRange(memPool.OrderByDescending(x => x.Size));
+            workingList.AddRange(transactionPool.OrderByDescending(x => x.Size));
 
             var maximumTransactionSize = MaximumBlockSize;
             var transactionsToProcess = new List<Transaction>();
 
             while (maximumTransactionSize > 0)
             {
-                while (memPoolWorkingList.Any())
+                while (workingList.Any())
                 {
-                    var transaction = memPoolWorkingList.First();
+                    var transaction = workingList.First();
 
                     if (transaction.Size <= maximumTransactionSize)
                     {
                         transactionsToProcess.Add(transaction);
-                        memPoolWorkingList.Remove(transaction);
-                        DeleteFromMemPool(transaction);
+                        workingList.Remove(transaction);
+                        DeleteFromTransactionPool(transaction);
                         maximumTransactionSize -= transaction.Size;
                     }
                     else
                     {
                         // If there is only one remaining transaction, but its size is too big to fit then return the list without it.
-                        if (memPoolWorkingList.Count == 1 && transaction.Size <= maximumTransactionSize)
+                        if (workingList.Count == 1 && transaction.Size <= maximumTransactionSize)
                         {
                             return transactionsToProcess;
                         }
 
-                        memPoolWorkingList = memPoolWorkingList.Where(x => x.Size <= maximumTransactionSize).ToList();
+                        workingList = workingList.Where(x => x.Size <= maximumTransactionSize).ToList();
 
-                        // If there are no transactions left in the MemPool,
-                        // or the smallest available size transaction in the MemPool is bigger than our remaining capacity then process this list as is.
-                        if (!memPoolWorkingList.Any() || !(memPoolWorkingList.OrderBy(x => x.Size).First().Size < maximumTransactionSize))
+                        // If there are no transactions left in the transaction pool,
+                        // or the smallest available size transaction in the transaction pool is bigger than our remaining capacity then process this list as is.
+                        if (!workingList.Any() || !(workingList.OrderBy(x => x.Size).First().Size < maximumTransactionSize))
                         {
                             return transactionsToProcess;
                         }
@@ -172,7 +189,7 @@ namespace BlockChain
                 {
                     foreach (var transaction in transactionsToProcess)
                     {
-                        AddToMemPool(transaction);
+                        AddToTransactionPool(transaction);
                     }
                 }
 
@@ -184,7 +201,7 @@ namespace BlockChain
             return transactionsToProcess;
         }
 
-        private static void AddToMemPool(Transaction transaction)
+        private static void AddToTransactionPool(Transaction transaction)
         {
             using (var db = new BlockChainDbContext())
             {
@@ -193,7 +210,7 @@ namespace BlockChain
             }
         }
 
-        private static void DeleteFromMemPool(Transaction transaction)
+        private static void DeleteFromTransactionPool(Transaction transaction)
         {
             using (var db = new BlockChainDbContext())
             {
@@ -202,14 +219,19 @@ namespace BlockChain
             }
         }
 
+        /// <summary>
+        /// Gets the verified and unverified balances for a wallet.
+        /// </summary>
+        /// <param name="walletId">the wallet id.</param>
+        /// <param name="unVerifiedBalance">The unverified balance.</param>
+        /// <returns>The verified balance.</returns>
         private static decimal GetBalance(Guid walletId, out decimal unVerifiedBalance)
         {
-            // TODO: Somewhere, check a balance before allowing a transaction to occur.
             decimal uvb;
             decimal balance;
             var transactionsList = new List<Transaction>();
 
-            // Get all the verified transactions from the blockchain together.
+            // Get all the verified transactions from the blockchain.
             foreach (var block in GetBlockchain())
             {
                 transactionsList.AddRange(block.Transactions);
@@ -218,8 +240,10 @@ namespace BlockChain
             balance = transactionsList.Where(x => x.DestinationWalletId == walletId).Sum(x => x.TransferedAmount);
             balance -= transactionsList.Where(x => x.SourceWalletId == walletId).Sum(x => x.TransferedAmount) - transactionsList.Where(x => x.SourceWalletId == walletId).Sum(x => x.TransferFee);
 
+            // Clear all the verified transactions out...
             transactionsList.Clear();
-            transactionsList.AddRange(GetMemPool());
+            // ...so that we can now query the unverified transactions from the transaction pool.
+            transactionsList.AddRange(GetTransactionPool());
 
             uvb = transactionsList.Where(x => x.DestinationWalletId == walletId).Sum(x => x.TransferedAmount);
             uvb -= transactionsList.Where(x => x.SourceWalletId == walletId).Sum(x => x.TransferedAmount) - transactionsList.Where(x => x.SourceWalletId == walletId).Sum(x => x.TransferFee);
@@ -252,60 +276,33 @@ namespace BlockChain
                 });
             }
 
-            var hashedTransactions = GenerateTransactionHashes(transactionsList);
+            var block = CreateBlock(transactionsList);
 
-            // Process the merkle tree, to return the merkle root, using the hashed values from above.
-            var merkleRoot = ProcessMerkleRootTree(hashedTransactions);
-
-            // Stick the transactions list, previous hash value, merkle root, and a load of other data into a block.
-            var block = new Block
-            {
-                MaximumBlockSize = MaximumBlockSize,
-                BlockSize = transactionsList.Sum(x => x.Size),
-                Position = NextAvailableIndexPosition(),
-                TransactionCount = transactionsList.Count,
-                Transactions = transactionsList,
-                Header = new BlockHeader
-                {
-                    PreviousHash = GetLastHash(),
-                    Timestamp = DateTime.Now,
-                    Difficulty = Difficulty,
-                    MerkleRoot = merkleRoot,
-                    Version = Version
-                }
-            };
-
-            // Process this block to generate a valid hash, checking against our difficulty level.
-            var validBlock = ValidateBlock(block);
-
-            // Once valid, add to the blockchain.
-            AddBlock(validBlock);
+            AddToBlockchain(ValidateBlock(block));
         }
 
-        private static string ProcessMerkleRootTree(IEnumerable<Tuple<int, string>> hashKvps)
+        /// <summary>
+        /// Processes a merkle tree using a list of hashes to generate the merkle root hash.
+        /// </summary>
+        /// <param name="hashKvps">The list of hashes to process.</param>
+        /// <returns>The merkle root hash.</returns>
+        private static string GenerateMerkleRootHash(IEnumerable<Tuple<int, string>> hashKvps)
         {
             Console.WriteLine("Processing merkle tree...");
 
             var hashKvpsToProcess = hashKvps.OrderBy(x => x.Item1).ToList();
-
-            // This is where the hashes will be stored that are created from the transactions processed from the list above.
             var workingHashKvpList = new List<Tuple<int, string>>();
 
             if (hashKvpsToProcess.Count > 1)
             {
-                // How many times we have had to go through the hashing process to roll the merkle tree up towards its root hash.
                 var passCount = 0;
 
                 // If the count is equal to one here then we have found our root value, otherwise continue processing.
                 while (workingHashKvpList.Count != 1)
                 {
-                    // If at the end of the pass there are 2 or more hashes left then we need to go through the process again.
                     if (workingHashKvpList.Count > 1)
                     {
-                        // Repopulate the processing list, so that we can use it in the WHILE loop below.
                         hashKvpsToProcess = workingHashKvpList.OrderBy(x => x.Item1).ToList();
-
-                        // Clear out the working list so that we can repopulate with our generated hashes in the WHILE loop below.
                         workingHashKvpList.Clear();
                     }
 
@@ -316,7 +313,7 @@ namespace BlockChain
                         Thread.Sleep(Sleep);
                         Console.WriteLine("Pass: " + passCount);
 
-                        // If there are an odd number of items to process then we add the last  allowing us to pair up an even number.
+                        // If there are an odd number of items to process then we add the last allowing us to pair up an even number.
                         if (hashKvpsToProcess.Count % 2 == 1)
                         {
                             hashKvpsToProcess.Add(hashKvpsToProcess.Last());
@@ -329,7 +326,7 @@ namespace BlockChain
                             // Add the newly hashed pair, plus their index, to the working list.
                             workingHashKvpList.Add(new Tuple<int, string>(idx, GenerateHash(hashKvpsToProcess[0].Item2, hashKvpsToProcess[1].Item2)));
 
-                            // Remove the items we have processed for when we run through the WHILE loop again.
+                            // Remove the pair of items we have processed for when we run through the WHILE loop again.
                             for (var i = 0; i < 2; i++)
                             {
                                 hashKvpsToProcess.Remove(hashKvpsToProcess[0]);
@@ -377,6 +374,11 @@ namespace BlockChain
             return root;
         }
 
+        /// <summary>
+        /// Generates an indexed list of hashes based on a list of transactions.
+        /// </summary>
+        /// <param name="transactions">The list of transactions.</param>
+        /// <returns>an >int, string> tuple containing an index and hash string.</returns>
         private static IEnumerable<Tuple<int, string>> GenerateTransactionHashes(IList<Transaction> transactions)
         {
             Console.WriteLine("Hashing transactions...");
@@ -385,11 +387,9 @@ namespace BlockChain
 
             for (var i = 0; i < transactions.Count; i++)
             {
-                // Concatenate all the data from thet transaction.
                 var input = ConcatenateTransactionData(transactions[i]);
                 var hash = GenerateHash(input);
 
-                // Add the hash to our list of hashes to return.
                 transactionHashKvpList.Add(new Tuple<int, string>(i, hash));
             }
 
@@ -412,9 +412,14 @@ namespace BlockChain
 
         private static string ConcatenateTransactionData(Transaction transaction)
         {
-            return string.Concat(transaction.SourceWalletId,
-                                 transaction.DestinationWalletId,
-                                 transaction.Timestamp);
+            var concatenatedString = string.Empty;
+
+            foreach (var property in transaction.GetType().GetProperties())
+            {
+                concatenatedString += string.Concat(property.GetValue(transaction));
+            }
+
+            return concatenatedString;
         }
 
         private static string GenerateHash(string firstInput, string secondInput)
@@ -437,7 +442,10 @@ namespace BlockChain
             return hashString;
         }
 
-        public static void InitiliseBlockChain()
+        /// <summary>
+        /// Creates the genesis block - the first block within the chain.
+        /// </summary>
+        public static void InitiliseBlockchain()
         {
             Console.WriteLine("Initialising blockchain...");
             Thread.Sleep(Sleep);
@@ -445,7 +453,6 @@ namespace BlockChain
             Console.WriteLine("Generating genesis block...");
             Thread.Sleep(Sleep);
 
-            // Creates the genesis block - the first block within the chain.
             const string previousHash = "0000000000000000000000000000000000000000000000000000000000000000";
 
             var transactions = new List<Transaction>{ new Transaction
@@ -461,7 +468,6 @@ namespace BlockChain
 
             var block = new Block
             {
-                // We need to find the next available index position within the blockchain to put the block into.
                 Position = NextAvailableIndexPosition(),
                 MaximumBlockSize = MaximumBlockSize,
                 BlockSize = transactions.Sum(x => x.Size),
@@ -476,15 +482,15 @@ namespace BlockChain
                 }
             };
 
-            block.Header.MerkleRoot = ProcessMerkleRootTree(hashedTransactions);
+            block.Header.MerkleRootHash = GenerateMerkleRootHash(hashedTransactions);
 
             Console.WriteLine("Genesis block created...");
             Thread.Sleep(Sleep);
 
-            AddBlock(ValidateBlock(block));
+            AddToBlockchain(ValidateBlock(block));
         }
 
-        private static void AddBlock(Block block)
+        private static void AddToBlockchain(Block block)
         {
             Console.WriteLine("Current block count: " + GetBlockchain().Count());
             Console.WriteLine("Adding block to blockchain...");
@@ -492,14 +498,16 @@ namespace BlockChain
 
             if (GetBlockchain().Count() != block.Position)
             {
-                Console.WriteLine("Block expected position " + block.Position + " is not free within the blockchain!");
+                Console.WriteLine("Error - block expected position " + block.Position + " is not free within the blockchain!");
                 Console.WriteLine("Press any key to retry...");
+                Console.Beep();
                 Console.ReadLine();
 
-                AddBlock(ValidateBlock(block));
+                // Reprocess the block, and reattempt to add it to the blockchain.
+                AddToBlockchain(ValidateBlock(block));
             }
 
-            BlockChain.Add(block);
+            Blockchain.Add(block);
 
             Console.WriteLine("Block added. Block count: " + GetBlockchain().Count());
             if (ReadLine)
@@ -509,6 +517,11 @@ namespace BlockChain
             }
         }
 
+        /// <summary>
+        /// Performs the proof of work algorithm on an unprocessed block.
+        /// </summary>
+        /// <param name="block">The block to be processed.</param>
+        /// <returns>A processed block with the valid hash and nonce inside.</returns>
         private static Block ValidateBlock(Block block)
         {
             Console.WriteLine("Validating block...");
@@ -520,22 +533,21 @@ namespace BlockChain
             Console.WriteLine("Generating valid hash...");
             Thread.Sleep(Sleep);
 
-            // If the hash does not start with the required amount of zeros then it is not valid.
             while (!IsHashValid(hash))
             {
-                // The nonce goes into the input to be hashed for our valid block hash, so everytime the hash validation fails the input is rehashed with a new nonce value.
                 nonce += 1;
 
-                var input = string.Concat(block.Header.MerkleRoot,
+                var input = string.Concat(block.Header.MerkleRootHash,
                                           nonce,
                                           block.Header.PreviousHash,
                                           block.Header.Timestamp,
                                           block.MagicNumber,
-                                          block.Transactions.Sum(x => x.Size));
+                                          block.Header);
 
                 hash = GenerateHash(input);
             }
 
+            // Hash is valid.
             block.Header.Nonce = nonce;
             block.Header.ValidHash = hash;
 
@@ -551,8 +563,10 @@ namespace BlockChain
 
         private static bool IsHashValid(string hash)
         {
-            // Difficulty is the amount of numbers this has to satisfy.
+            // Difficulty is the amount of leading zeros this hash has to satisfy.
             var hashValid = hash.StartsWith(Difficulty);
+
+            // TODO: Implement a target to be under?
 
             return hashValid;
         }
@@ -564,11 +578,6 @@ namespace BlockChain
                 return db.Wallets.First(x => x.UserId == userId);
             }
         }
-
-        //private static Guid GetRandomWalletId(Guid? idToExclude = null)
-        //{
-        //    return GetWallets().Where(x => x.Id != idToExclude).ToList()[new Random().Next(0, GetWallets().Count() - 1)].Id;
-        //}
 
         private static decimal GetMinerBalance()
         {
@@ -600,10 +609,10 @@ namespace BlockChain
 
         private static IEnumerable<Block> GetBlockchain()
         {
-            return BlockChain.OrderBy(x => x.Position).ToList();
+            return Blockchain.OrderBy(x => x.Position).ToList();
         }
 
-        private static IEnumerable<Transaction> GetMemPool()
+        private static IEnumerable<Transaction> GetTransactionPool()
         {
             using (var db = new BlockChainDbContext())
             {

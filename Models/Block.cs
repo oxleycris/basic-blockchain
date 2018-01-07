@@ -36,7 +36,7 @@ namespace BlockChain.Models
 
         public string PreviousHash { get; set; }
 
-        public string MerkleRoot { get; set; }
+        public string MerkleRootHash { get; set; }
 
         public DateTime Timestamp { get; set; }
 
