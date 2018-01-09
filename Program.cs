@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -15,9 +14,6 @@ namespace BlockChain
     {
         // General TODO LIST 
         // TODO: Somewhere, check a balance before allowing a transaction to occur.
-        /*
-         * Block Reward: the number of newly-created bitcoins. This number was initially set to 50, halved to 25 in late-2012 and will halve again to 12.5 in mid-2016. This halving process continues, approximately every four years (or every 210,000 blocks), until all 21 million bitcoins are created. This is the only way in which new bitcoins can be created; by miners according to the code’s rate and limit.
-        */
 
         // DEBUG SETTINGS ////////////////////////////
         private static bool ReadLine = false;
@@ -25,14 +21,14 @@ namespace BlockChain
         private static Guid GenesisUserId = GetGenesisUser().Id;
         //////////////////////////////////////////////
 
-        private const string Difficulty = "00";
-        private const string Version = "0.1";
-        private const int MaximumBlockSize = 1000000;
-        private static decimal OxCoinLimit = 14000000m;
-        private static decimal MinerReward = 50m;
-        private static int MinerRewardBlockchainTarget = 10;
+        public const string Difficulty = "00";
+        public const string Version = "0.1";
+        public const int MaximumBlockSize = 1000000;
+        public static decimal OxCoinLimit = 14000000m;
+        public static decimal MinerReward = 6000m;
+        public static int MinerRewardBlockchainTarget = 10;
 
-        private static IList<Block> _blockchain = new List<Block>();
+        public static IList<Block> _blockchain = new List<Block>();
 
         public static void Main(string[] args)
         {
@@ -53,7 +49,7 @@ namespace BlockChain
                     fnSpaces += " ";
                 }
 
-                var walletId = GetUserWallet(GetUser(user.Id).Id).Id;
+                var walletId = GetUserWallet(user.Id).Id;
                 var verifiedBalance = GetBalanceForUser(walletId, out var unVerifiedBalance);
 
                 var vbSpaces = string.Empty;
@@ -69,7 +65,7 @@ namespace BlockChain
             foreach (var miner in GetMiners())
             {
                 decimal uvb;
-                Console.WriteLine(miner.Id + "  |  " + GetBalanceForMiner(miner.WalletId, out uvb) + "(" + uvb + " unverified)");
+                Console.WriteLine(miner.WalletId + "  |  " + GetBalanceForMiner(miner.WalletId, out uvb) + "(" + uvb + " unverified)");
             }
 
             Console.WriteLine("Mining reward: " + GetMiningReward());
@@ -109,7 +105,7 @@ namespace BlockChain
                             fnSpaces += " ";
                         }
 
-                        var walletId = GetUserWallet(GetUser(user.Id).Id).Id;
+                        var walletId = GetUserWallet(user.Id).Id;
                         var verifiedBalance = GetBalanceForUser(walletId, out var unVerifiedBalance);
 
                         var vbSpaces = string.Empty;
@@ -125,7 +121,7 @@ namespace BlockChain
                     foreach (var miner in GetMiners())
                     {
                         decimal uvb;
-                        Console.WriteLine(miner.Id + "  |  " + GetBalanceForMiner(miner.WalletId, out uvb));
+                        Console.WriteLine(miner.WalletId + "  |  " + GetBalanceForMiner(miner.WalletId, out uvb) + "(" + uvb + " unverified)");
                     }
 
                     Console.WriteLine("Mining reward: " + GetMiningReward());
@@ -261,9 +257,16 @@ namespace BlockChain
 
         private static void DeleteFromTransactionPool(Transaction transaction)
         {
+            Transaction trnx1;
+
             using (var db = new BlockChainDbContext())
             {
-                db.Transactions.Remove(transaction);
+                trnx1 = db.Transactions.First(x => x.Id == transaction.Id);
+            }
+
+            using (var db = new BlockChainDbContext())
+            {
+                db.Transactions.Remove(trnx1);
                 db.SaveChanges();
             }
         }
@@ -281,7 +284,7 @@ namespace BlockChain
             var blockchainTransactions = new List<Transaction>();
             var transactionPoolTransactions = new List<Transaction>();
             var userTransactions = new List<Transaction>();
-            var userWallets = GetWallets().ToList();
+            var userWallets = GetAllWallets().ToList();
 
             // Get all the verified transactions from the blockchain.
             foreach (var block in GetBlockchain())
@@ -325,7 +328,8 @@ namespace BlockChain
             var balance = 0m;
             var blockchainTransactions = new List<Transaction>();
             var transactionPoolTransactions = new List<Transaction>();
-            var minerTransactions = new List<Transaction>();
+            var minerVerifiedTransactions = new List<Transaction>();
+            var minerUnverifiedTransactions = new List<Transaction>();
 
             // Get all the verified transactions from the blockchain.
             foreach (var block in GetBlockchain())
@@ -337,12 +341,12 @@ namespace BlockChain
 
             foreach (var miner in GetMiners())
             {
-                minerTransactions.AddRange(blockchainTransactions.Where(x => x.DestinationWalletId == miner.WalletId));
-                minerTransactions.AddRange(transactionPoolTransactions.Where(x => x.DestinationWalletId == miner.WalletId));
+                minerVerifiedTransactions.AddRange(blockchainTransactions.Where(x => x.DestinationWalletId == miner.WalletId));
+                minerUnverifiedTransactions.AddRange(transactionPoolTransactions.Where(x => x.DestinationWalletId == miner.WalletId));
             }
 
-            balance = minerTransactions.Where(x => x.DestinationWalletId == walletId).Sum(x => x.TransferedAmount);
-            unVerifiedBalance = minerTransactions.Where(x => x.SourceWalletId == walletId).Sum(x => x.TransferedAmount);
+            balance = minerVerifiedTransactions.Where(x => x.DestinationWalletId == walletId).Sum(x => x.TransferedAmount);
+            unVerifiedBalance = minerUnverifiedTransactions.Where(x => x.DestinationWalletId == walletId).Sum(x => x.TransferedAmount);
 
             return balance;
         }
@@ -354,7 +358,7 @@ namespace BlockChain
 
             var transactionsList = new List<Transaction>();
             var genesisUser = GetGenesisUser();
-            var wallets = GetWallets().ToList();
+            var wallets = GetUserWallets().ToList();
 
             foreach (var wallet in wallets)
             {
@@ -536,10 +540,7 @@ namespace BlockChain
             return hashString;
         }
 
-        /// <summary>
-        /// Creates the genesis block - the first block within the chain.
-        /// </summary>
-        public static void InitiliseBlockchain()
+        private static void InitiliseBlockchain()
         {
             Console.WriteLine("Initialising blockchain...");
             Thread.Sleep(Sleep);
@@ -595,8 +596,6 @@ namespace BlockChain
             };
 
             AddToTransactionPool(transaction);
-            Console.WriteLine("Rewarded");
-            Console.ReadLine();
         }
 
         private static decimal GetMiningReward()
@@ -721,13 +720,24 @@ namespace BlockChain
             }
         }
 
-        private static User GetUser(Guid id)
+        private static Wallet GetMinerWallet(Guid minerId)
         {
             using (var db = new BlockChainDbContext())
             {
-                return db.Users.First(x => x.Id == id);
+                var userMiner = GetMiners().First(x => x.Id == minerId);
+
+                return db.Wallets.First(x => x.Id == userMiner.WalletId);
             }
         }
+
+
+        //private static User GetUser(Guid id)
+        //{
+        //    using (var db = new BlockChainDbContext())
+        //    {
+        //        return db.Users.First(x => x.Id == id);
+        //    }
+        //}
 
         private static User GetGenesisUser()
         {
@@ -764,28 +774,51 @@ namespace BlockChain
             }
         }
 
-        private static IEnumerable<Wallet> GetWallets(bool includeMiners = false)
+        private static IEnumerable<Wallet> GetAllWallets()
         {
-            var miners = GetMiners();
-            var wallets = new List<Wallet>();
-
             using (var db = new BlockChainDbContext())
             {
-                wallets = db.Wallets.Where(x => x.UserId != GetGenesisUser().Id).ToList();
-
-                if (!includeMiners)
-                {
-                    foreach (var miner in miners)
-                    {
-                        wallets.Remove(wallets.First(x => x.Id == miner.WalletId));
-                    }
-                }
-
-                foreach (var wallet in wallets)
+                foreach (var wallet in db.Wallets.Where(x => x.UserId != GetGenesisUser().Id))
                 {
                     yield return wallet;
                 }
             }
+        }
+
+        private static IEnumerable<Wallet> GetMinerWallets()
+        {
+            var miners = GetMiners().ToList();
+            var minersWallets = new List<Wallet>();
+
+            foreach (var miner in miners)
+            {
+                var wallet = GetWallet(miner.WalletId);
+
+                minersWallets.Add(wallet);
+            }
+
+            return minersWallets;
+        }
+
+        private static Wallet GetWallet(Guid walletId)
+        {
+            using (var db = new BlockChainDbContext())
+            {
+                return db.Wallets.First(x => x.Id == walletId);
+            }
+        }
+
+        private static IEnumerable<Wallet> GetUserWallets()
+        {
+            var wallets = GetAllWallets().ToList();
+            var minersWallets = GetMinerWallets().ToList();
+
+            foreach (var minersWallet in minersWallets)
+            {
+                wallets.RemoveAll(x => x.Id == minersWallet.Id);
+            }
+
+            return wallets;
         }
 
         private static Miner GetRandomMiner()
@@ -817,7 +850,9 @@ namespace BlockChain
         {
             var total = OxCoinLimit;
 
-            foreach (var wallet in GetWallets())
+            // OxCoinLimit - All verified wallets - all unverified wallets
+
+            foreach (var wallet in GetAllWallets())
             {
                 total -= GetBalanceForUser(wallet.Id, out var unVerified);
                 total -= GetBalanceForMiner(wallet.Id, out unVerified);
