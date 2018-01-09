@@ -18,14 +18,14 @@ namespace BlockChain
         // DEBUG SETTINGS ////////////////////////////
         private static bool ReadLine = false;
         private const int Sleep = 50;
-        private static Guid GenesisUserId = GetGenesisUser().Id;
         //////////////////////////////////////////////
 
         public const string Difficulty = "00";
         public const string Version = "0.1";
         public const int MaximumBlockSize = 1000000;
-        public static decimal OxCoinLimit = 14000000m;
-        public static decimal MinerReward = 6000m;
+        public static decimal OxCoinLimit = 1400m;
+        public static decimal MinerReward = 50;
+        public static bool MinersAreRewarded = true;
         public static int MinerRewardBlockchainTarget = 10;
 
         public static IList<Block> _blockchain = new List<Block>();
@@ -75,8 +75,7 @@ namespace BlockChain
             // Miner.
             // Eventually this will just run as a constant process.
             // Oneday, someday, somehow, somewhere...
-            //while (GetTransactionPool().Any())
-            while (GetOxCoinTotalRemaining() > 0)
+            while (true)
             {
                 var transactionsToProcess = GetTransactionsToProcess().ToList();
 
@@ -87,7 +86,18 @@ namespace BlockChain
 
                     AddToBlockchain(validBlock);
 
-                    RewardMiner(GetRandomMiner());
+                    // Every 10 valid blocks added to the blockchain causes the mining reward to half.
+                    if (GetBlockchain().Count() == MinerRewardBlockchainTarget)
+                    {
+                        MinerRewardBlockchainTarget += 10;
+                        MinerReward = MinerReward / 2m;
+                    }
+
+                    if (GetOxCoinTotalRemaining() >= MinerReward)
+                    {
+                        RewardMiner(GetRandomMiner());
+                    }
+
                     // ???
                     // Profit!
 
@@ -134,8 +144,8 @@ namespace BlockChain
                 }
             }
 
-            #region Transaction pool empty
-            Console.WriteLine("The transaction pool is now empty.");
+            #region No more OxCoin's left...
+            Console.WriteLine("There are no more OxCoin's left. Congratulations - a winner is you.");
             Console.WriteLine("Blockchain valid hashes:");
             Console.WriteLine("Index  |  Size  |  Nonce  |  Hash");
             foreach (var b in GetBlockchain().OrderBy(x => x.Position))
@@ -186,61 +196,55 @@ namespace BlockChain
         private static IEnumerable<Transaction> GetTransactionsToProcess()
         {
             var transactionPool = GetTransactionPool().ToList();
-            var workingList = transactionPool.Where(x => x.Timestamp <= DateTime.Now.AddMonths(-3)).ToList();
-
-            foreach (var transaction in workingList)
-            {
-                transactionPool.Remove(transaction);
-            }
-
-            workingList.AddRange(transactionPool.OrderByDescending(x => x.Size));
-
-            var maximumTransactionSize = MaximumBlockSize;
             var transactionsToProcess = new List<Transaction>();
 
-            while (maximumTransactionSize > 0)
+            if (transactionPool.Count > 1)
             {
-                while (workingList.Any())
+                var workingList = transactionPool.Where(x => x.Timestamp <= DateTime.Now.AddMonths(-3)).ToList();
+
+                foreach (var transaction in workingList)
                 {
-                    var transaction = workingList.First();
-
-                    if (transaction.Size <= maximumTransactionSize)
-                    {
-                        transactionsToProcess.Add(transaction);
-                        workingList.Remove(transaction);
-                        DeleteFromTransactionPool(transaction);
-                        maximumTransactionSize -= transaction.Size;
-                    }
-                    else
-                    {
-                        // If there is only one remaining transaction, but its size is too big to fit then return the list without it.
-                        if (workingList.Count == 1 && transaction.Size <= maximumTransactionSize)
-                        {
-                            return transactionsToProcess;
-                        }
-
-                        workingList = workingList.Where(x => x.Size <= maximumTransactionSize).ToList();
-
-                        // If there are no transactions left in the transaction pool,
-                        // or the smallest available size transaction in the transaction pool is bigger than our remaining capacity then process this list as is.
-                        if (!workingList.Any() || !(workingList.OrderBy(x => x.Size).First().Size < maximumTransactionSize))
-                        {
-                            return transactionsToProcess;
-                        }
-                    }
+                    transactionPool.Remove(transaction);
                 }
 
-                if (transactionsToProcess.Any())
+                workingList.AddRange(transactionPool.OrderByDescending(x => x.Size));
+
+                var maximumTransactionSize = MaximumBlockSize;
+
+                while (maximumTransactionSize > 0)
                 {
-                    foreach (var transaction in transactionsToProcess)
+                    while (workingList.Any())
                     {
-                        AddToTransactionPool(transaction);
+                        var transaction = workingList.First();
+
+                        if (transaction.Size <= maximumTransactionSize)
+                        {
+                            transactionsToProcess.Add(transaction);
+                            workingList.Remove(transaction);
+                            DeleteFromTransactionPool(transaction);
+                            maximumTransactionSize -= transaction.Size;
+                        }
+                        else
+                        {
+                            // If there is only one remaining transaction, but its size is too big to fit then return the list without it.
+                            if (workingList.Count == 1 && transaction.Size <= maximumTransactionSize)
+                            {
+                                return transactionsToProcess;
+                            }
+
+                            workingList = workingList.Where(x => x.Size <= maximumTransactionSize).ToList();
+
+                            // If there are no transactions left in the transaction pool,
+                            // or the smallest available size transaction in the transaction pool is bigger than our remaining capacity then process this list as is.
+                            if (!workingList.Any() || !(workingList.OrderBy(x => x.Size).First().Size < maximumTransactionSize))
+                            {
+                                return transactionsToProcess;
+                            }
+                        }
                     }
+
+                    return transactionsToProcess;
                 }
-
-                // transactionsToProcess.Clear();
-
-                return transactionsToProcess;
             }
 
             return transactionsToProcess;
@@ -587,9 +591,11 @@ namespace BlockChain
 
         private static void RewardMiner(Miner miner)
         {
+            var genesisUserId = GetGenesisUser().Id;
+
             var transaction = new Transaction
             {
-                SourceWalletId = GetUserWallet(GenesisUserId).Id,
+                SourceWalletId = GetUserWallet(genesisUserId).Id,
                 DestinationWalletId = miner.WalletId,
                 TransferedAmount = GetMiningReward(),
                 Timestamp = DateTime.Now
@@ -621,13 +627,6 @@ namespace BlockChain
             }
 
             _blockchain.Add(block);
-
-            // Every 10 valid blocks added to the blockchain causes the mining reward to half.
-            if (GetBlockchain().Count() == MinerRewardBlockchainTarget)
-            {
-                MinerRewardBlockchainTarget += 10;
-                MinerReward = MinerReward / 2m;
-            }
 
             Console.WriteLine("Block added. Block count: " + GetBlockchain().Count());
             if (ReadLine)
