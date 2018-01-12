@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using BlockChain.Models.OxCoin;
 
 namespace BlockChain.Models
 {
@@ -25,5 +27,8 @@ namespace BlockChain.Models
 
         [Required]
         public int Size { get; set; } = new Random().Next(200, 700);
+
+        [Required]
+        public IEnumerable<OxPiece> OxPieces { get; set; } = new List<OxPiece>();
     }
 }

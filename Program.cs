@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using BlockChain.Data;
 using BlockChain.Models;
+using BlockChain.Models.OxCoin;
 
 namespace BlockChain
 {
@@ -16,22 +17,31 @@ namespace BlockChain
         // TODO: Somewhere, check a balance before allowing a transaction to occur.
 
         // DEBUG SETTINGS ////////////////////////////
-        private static bool ReadLine = false;
-        private const int Sleep = 50;
+        private const int Sleep = 500;
         //////////////////////////////////////////////
 
-        public const string Difficulty = "00";
         public const string Version = "0.1";
-        public const int MaximumBlockSize = 1000000;
-        public static decimal OxCoinLimit = 1400m;
-        public static decimal MinerReward = 50;
-        public static bool MinersAreRewarded = true;
-        public static int MinerRewardBlockchainTarget = 10;
 
-        public static IList<Block> _blockchain = new List<Block>();
+        public const int MaximumBlockSize = 1000000;
+        public const decimal OxCoinLimit = 1400m;
+        public const int OxPiecesPerOxCoin = 1000;
+
+        public const string Difficulty = "000" +
+                                         ""; // TODO: Implement proper hex targeting, once I figure it out...
+
+        public static decimal MinerReward = 50;
+        public static int MinerRewardBlockchainTarget = 20;
+        public const int MinerRewardBlockchainTargetIncrement = 20;
+
+        public static IList<Block> Blockchain = new List<Block>();
 
         public static void Main(string[] args)
         {
+            if (GetGenesisUser() == null)
+            {
+                GenerateGenesisUserWithWalletId();
+            }
+
             // Initialise the blockchain, and add the genesis block to it.
             InitiliseBlockchain();
             TransferGenesisFundsToUsers();
@@ -44,6 +54,7 @@ namespace BlockChain
             {
                 var fnSpaces = string.Empty;
                 var fullName = string.Format(user.GivenName + " " + user.FamilyName);
+
                 for (var i = 0; i < (30 - fullName.Length); i++)
                 {
                     fnSpaces += " ";
@@ -51,8 +62,8 @@ namespace BlockChain
 
                 var walletId = GetUserWallet(user.Id).Id;
                 var verifiedBalance = GetBalanceForUser(walletId, out var unVerifiedBalance);
-
                 var vbSpaces = string.Empty;
+
                 for (var i = 0; i < (10 - verifiedBalance.ToString(CultureInfo.InvariantCulture).Length); i++)
                 {
                     vbSpaces += " ";
@@ -64,8 +75,7 @@ namespace BlockChain
             Console.WriteLine("Miner balance: ");
             foreach (var miner in GetMiners())
             {
-                decimal uvb;
-                Console.WriteLine(miner.WalletId + "  |  " + GetBalanceForMiner(miner.WalletId, out uvb) + "(" + uvb + " unverified)");
+                Console.WriteLine(miner.WalletId + "  |  " + GetBalanceForMiner(miner.WalletId, out decimal uvb) + "(" + uvb + " unverified)");
             }
 
             Console.WriteLine("Mining reward: " + GetMiningReward());
@@ -82,14 +92,23 @@ namespace BlockChain
                 if (transactionsToProcess.Count > 0)
                 {
                     var block = CreateBlock(transactionsToProcess);
+
+                    var startTime = DateTime.Now;
                     var validBlock = ValidateBlock(block);
+                    var finishTime = DateTime.Now;
+
+                    var difference = finishTime.Subtract(startTime);
+                    Console.WriteLine("Time taken to find proof: (seconds): " + difference.Seconds);
+                    Console.WriteLine("Time Difference (minutes): " + difference.Minutes);
+                    Thread.Sleep(Sleep);
 
                     AddToBlockchain(validBlock);
 
-                    // Every 10 valid blocks added to the blockchain causes the mining reward to half.
+                    // Every 10 valid blocks added to the blockchain causes the mining reward to half,
+                    // and the target to be increased.
                     if (GetBlockchain().Count() == MinerRewardBlockchainTarget)
                     {
-                        MinerRewardBlockchainTarget += 10;
+                        MinerRewardBlockchainTarget += MinerRewardBlockchainTargetIncrement;
                         MinerReward = MinerReward / 2m;
                     }
 
@@ -110,6 +129,7 @@ namespace BlockChain
                     {
                         var fnSpaces = string.Empty;
                         var fullName = string.Format(user.GivenName + " " + user.FamilyName);
+
                         for (var i = 0; i < (30 - fullName.Length); i++)
                         {
                             fnSpaces += " ";
@@ -117,8 +137,8 @@ namespace BlockChain
 
                         var walletId = GetUserWallet(user.Id).Id;
                         var verifiedBalance = GetBalanceForUser(walletId, out var unVerifiedBalance);
-
                         var vbSpaces = string.Empty;
+
                         for (var i = 0; i < (10 - verifiedBalance.ToString(CultureInfo.InvariantCulture).Length); i++)
                         {
                             vbSpaces += " ";
@@ -128,10 +148,10 @@ namespace BlockChain
                     }
 
                     Console.WriteLine("Miner balance: ");
+
                     foreach (var miner in GetMiners())
                     {
-                        decimal uvb;
-                        Console.WriteLine(miner.WalletId + "  |  " + GetBalanceForMiner(miner.WalletId, out uvb) + "(" + uvb + " unverified)");
+                        Console.WriteLine(miner.WalletId + "  |  " + GetBalanceForMiner(miner.WalletId, out decimal uvb) + "(" + uvb + " unverified)");
                     }
 
                     Console.WriteLine("Mining reward: " + GetMiningReward());
@@ -141,22 +161,9 @@ namespace BlockChain
                 else
                 {
                     Console.WriteLine("Waiting for the transaction pool to populate...");
+                    Thread.Sleep(Sleep);
                 }
             }
-
-            #region No more OxCoin's left...
-            Console.WriteLine("There are no more OxCoin's left. Congratulations - a winner is you.");
-            Console.WriteLine("Blockchain valid hashes:");
-            Console.WriteLine("Index  |  Size  |  Nonce  |  Hash");
-            foreach (var b in GetBlockchain().OrderBy(x => x.Position))
-            {
-                Console.WriteLine(b.Position + "  |  " + b.BlockSize + "  |  " + b.Header.Nonce + "  |  " + b.Header.ValidHash);
-            }
-
-            // Finished - beep!
-            Console.Beep();
-            Console.ReadLine();
-            #endregion
         }
 
         /// <summary>
@@ -368,19 +375,30 @@ namespace BlockChain
             {
                 var sourceWalletId = GetUserWallet(genesisUser.Id).Id;
                 var destinationWalletId = wallet.Id;
-
-                transactionsList.Add(new Transaction
+                var transaction = new Transaction
                 {
                     SourceWalletId = sourceWalletId,
                     DestinationWalletId = destinationWalletId,
                     TransferedAmount = 50m,
                     Timestamp = DateTime.Now
-                });
+                };
+
+                // TODO: Figure out how to get this users OxPieces to reassign some of them to this destinationWalletId.
+                transactionsList.Add(transaction);
             }
 
             var block = CreateBlock(transactionsList);
 
+            var startTime = DateTime.Now;
+
             AddToBlockchain(ValidateBlock(block));
+
+            var finishTime = DateTime.Now;
+            var difference = finishTime.Subtract(startTime);
+
+            Console.WriteLine("Time taken to find proof: (seconds): " + difference.Seconds);
+            Console.WriteLine("Time Difference (minutes): " + difference.Minutes);
+            Thread.Sleep(Sleep);
         }
 
         /// <summary>
@@ -443,21 +461,10 @@ namespace BlockChain
                         {
                             Console.WriteLine(workingHashKvp.Item1 + " | " + workingHashKvp.Item2);
                         }
-
-                        if (ReadLine)
-                        {
-                            Console.WriteLine("Press any key to continue...");
-                            Console.ReadLine();
-                        }
                     }
                 }
 
                 Console.WriteLine("Merkle root: " + workingHashKvpList.First().Item2);
-                if (ReadLine)
-                {
-                    Console.WriteLine("Press any key to continue...");
-                    Console.ReadLine();
-                }
 
                 return workingHashKvpList.First().Item2;
             }
@@ -467,11 +474,6 @@ namespace BlockChain
             var root = GenerateHash(hashKvpsToProcess.First().Item2, hashKvpsToProcess.First().Item2);
 
             Console.WriteLine("Merkle root: " + root);
-            if (ReadLine)
-            {
-                Console.WriteLine("Press any key to continue...");
-                Console.ReadLine();
-            }
 
             return root;
         }
@@ -503,25 +505,41 @@ namespace BlockChain
                 Console.WriteLine(kvp.Item1 + " | " + kvp.Item2);
             }
 
-            if (ReadLine)
-            {
-                Console.WriteLine("Press any key to continue...");
-                Console.ReadLine();
-            }
-
             return transactionHashKvpList;
         }
 
         private static string ConcatenateTransactionData(Transaction transaction)
         {
-            var concatenatedString = string.Empty;
+            var oxPieces = transaction.OxPieces;
+            var oxPieceCollectionDataString = new StringBuilder();
+
+            // Take data from transaction.OxCollection first and build a string of all values, 
+            // across all items within the collection.
+            foreach (var oxPiece in oxPieces)
+            {
+                var oxPieceDataString = new StringBuilder();
+
+                foreach (var property in oxPiece.GetType().GetProperties())
+                {
+                    oxPieceDataString.Append(property.GetValue(oxPiece));
+                }
+
+                oxPieceCollectionDataString.Append(oxPieceDataString);
+            }
+
+            // Then build a string of all the remaining transaction data in a seperate string.
+            var transactionDataString = new StringBuilder();
 
             foreach (var property in transaction.GetType().GetProperties())
             {
-                concatenatedString += string.Concat(property.GetValue(transaction));
+                if (property.Name != nameof(Transaction.OxPieces))
+                {
+                    transactionDataString.Append(property.GetValue(transaction));
+                }
             }
 
-            return concatenatedString;
+            // Return the combined string.
+            return string.Concat(transactionDataString.Replace(" ", string.Empty), oxPieceCollectionDataString.Replace(" ", string.Empty));
         }
 
         private static string GenerateHash(string firstInput, string secondInput)
@@ -554,14 +572,25 @@ namespace BlockChain
 
             const string previousHash = "0000000000000000000000000000000000000000000000000000000000000000";
 
-            var transactions = new List<Transaction>{ new Transaction
+            var transaction = new Transaction
             {
                 SourceWalletId = GetUserWallet(GetGenesisUser().Id).Id,
                 DestinationWalletId = GetUserWallet(GetGenesisUser().Id).Id,
-                TransferedAmount = OxCoinLimit,
                 Timestamp = DateTime.Now,
                 Size = MaximumBlockSize
-            }};
+            };
+
+            var oxPieces = new List<OxPiece>();
+
+            for (var i = 0; i < OxCoinLimit * OxPiecesPerOxCoin; i++)
+            {
+                oxPieces.Add(new OxPiece { WalletId = transaction.DestinationWalletId });
+            }
+
+            transaction.OxPieces = oxPieces;
+            transaction.TransferedAmount = (decimal)transaction.OxPieces.Count() / OxPiecesPerOxCoin;
+
+            var transactions = new List<Transaction> { transaction };
 
             var hashedTransactions = GenerateTransactionHashes(transactions);
 
@@ -586,7 +615,18 @@ namespace BlockChain
             Console.WriteLine("Genesis block created...");
             Thread.Sleep(Sleep);
 
+            var startTime = DateTime.Now;
+
             AddToBlockchain(ValidateBlock(block));
+
+            var finishTime = DateTime.Now;
+
+            var difference = finishTime.Subtract(startTime);
+
+            Console.WriteLine("Time taken to find proof: (seconds): " + difference.Seconds);
+            Console.WriteLine("Time Difference (minutes): " + difference.Minutes);
+            Thread.Sleep(Sleep);
+
         }
 
         private static void RewardMiner(Miner miner)
@@ -626,14 +666,9 @@ namespace BlockChain
                 AddToBlockchain(ValidateBlock(block));
             }
 
-            _blockchain.Add(block);
+            Blockchain.Add(block);
 
             Console.WriteLine("Block added. Block count: " + GetBlockchain().Count());
-            if (ReadLine)
-            {
-                Console.WriteLine("Press any key to continue...");
-                Console.ReadLine();
-            }
         }
 
         /// <summary>
@@ -656,14 +691,19 @@ namespace BlockChain
             {
                 nonce += 1;
 
-                var input = string.Concat(block.Header.MerkleRootHash,
-                                          block.Header.PreviousHash,
-                                          block.Header.Timestamp,
-                                          block.MagicNumber,
-                                          block.Header,
-                                          nonce);
+                var input = new StringBuilder();
 
-                hash = GenerateHash(input);
+                foreach (var property in block.Header.GetType().GetProperties())
+                {
+                    if (property.Name != nameof(BlockHeader.ValidHash))
+                    {
+                        input.Append(property.GetValue(block.Header));
+                    }
+                }
+
+                input.Append(nonce);
+
+                hash = GenerateHash(input.Replace(" ", string.Empty).ToString());
             }
 
             // Hash is valid.
@@ -671,11 +711,6 @@ namespace BlockChain
             block.Header.ValidHash = hash;
 
             Console.WriteLine("[VALID] | Nonce: " + nonce + " | Hash: " + hash);
-            if (ReadLine)
-            {
-                Console.WriteLine("Press any key to continue...");
-                Console.ReadLine();
-            }
 
             return block;
         }
@@ -694,12 +729,12 @@ namespace BlockChain
         {
             using (var db = new BlockChainDbContext())
             {
-                // user has two wallets
+                // A standard user has two wallets - their user wallet, and their miner wallet.
                 var userWallets = db.Wallets.Where(x => x.UserId == userId).ToList();
 
+                // Genesis user.
                 if (userWallets.Count == 1)
                 {
-                    // Genesis user.
                     return userWallets.First();
                 }
 
@@ -719,36 +754,17 @@ namespace BlockChain
             }
         }
 
-        private static Wallet GetMinerWallet(Guid minerId)
-        {
-            using (var db = new BlockChainDbContext())
-            {
-                var userMiner = GetMiners().First(x => x.Id == minerId);
-
-                return db.Wallets.First(x => x.Id == userMiner.WalletId);
-            }
-        }
-
-
-        //private static User GetUser(Guid id)
-        //{
-        //    using (var db = new BlockChainDbContext())
-        //    {
-        //        return db.Users.First(x => x.Id == id);
-        //    }
-        //}
-
         private static User GetGenesisUser()
         {
             using (var db = new BlockChainDbContext())
             {
-                return db.Users.First(x => x.GivenName == "Network" && x.FamilyName == "Admin");
+                return db.Users.FirstOrDefault(x => x.GivenName == "Network" && x.FamilyName == "Admin");
             }
         }
 
         private static IEnumerable<Block> GetBlockchain()
         {
-            return _blockchain.OrderBy(x => x.Position).ToList();
+            return Blockchain.OrderBy(x => x.Position).ToList();
         }
 
         private static IEnumerable<Transaction> GetTransactionPool()
@@ -849,10 +865,9 @@ namespace BlockChain
         {
             var total = OxCoinLimit;
 
-            // OxCoinLimit - All verified wallets - all unverified wallets
-
             foreach (var wallet in GetAllWallets())
             {
+                // TODO: Check what happens to unVerified here.....
                 total -= GetBalanceForUser(wallet.Id, out var unVerified);
                 total -= GetBalanceForMiner(wallet.Id, out unVerified);
                 total -= unVerified;
@@ -869,6 +884,36 @@ namespace BlockChain
         private static int NextAvailableIndexPosition()
         {
             return GetBlockchain().Count();
+        }
+
+        private static void GenerateGenesisUserWithWalletId()
+        {
+            var genesisUser = new User
+            {
+                GivenName = "Network",
+                FamilyName = "Admin"
+            };
+
+            AddUser(genesisUser);
+            AddWallet(new Wallet { UserId = GetGenesisUser().Id });
+        }
+
+        private static void AddUser(User genesisUser)
+        {
+            using (var db = new BlockChainDbContext())
+            {
+                db.Users.Add(genesisUser);
+                db.SaveChanges();
+            }
+        }
+
+        private static void AddWallet(Wallet wallet)
+        {
+            using (var db = new BlockChainDbContext())
+            {
+                db.Wallets.Add(wallet);
+                db.SaveChanges();
+            }
         }
     }
 
@@ -890,6 +935,7 @@ namespace BlockChain
                 n--;
                 var k = ThreadSafeRandom.ThisThreadsRandom.Next(n + 1);
                 var value = list[k];
+
                 list[k] = list[n];
                 list[n] = value;
             }
